@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Mi PaqueteBO",
+    "slug": "scannerapp",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./MiPaqueteBo_Android_Icons/master-1024.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#20539A"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "usesCleartextTraffic": true,
+      "package": "com.colee_615.scannerapp",
+      "adaptiveIcon": {
+        "foregroundImage": "./MiPaqueteBo_Android_Icons/master-1024.png",
+        "backgroundColor": "#20539A"
+      },
+      "googleServicesFile": "./google-services.json",
+      "useNextNotificationsApi": true,
+      "permissions": [
+        "POST_NOTIFICATIONS"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./MiPaqueteBo_Android_Icons/master-1024.png",
+          "color": "#FECC36"
+        }
+      ]
+    ],
+    "extra": {
+      "apiBaseUrl": "https://trackingbo.correos.gob.bo:8100",
+      "apiBearerToken": "eZMlItx6mQMNZjxoijEvf7K3pYvGGXMvEHmQcqvtlAPOEAPgyKDVOpyF7JP0ilbK",
+      "eas": {
+        "projectId": "cd7c789a-9a09-4ecc-a9ff-d991398252e3"
+      }
+    },
+    "owner": "leonardo345"
+  }
+}
