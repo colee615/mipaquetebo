@@ -16,7 +16,7 @@ export default function ScanScreen({ navigation }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors, typography } = theme;
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const insets = useSafeAreaInsets();
 
   const [codigo, setCodigo] = useState("");
@@ -267,7 +267,7 @@ export default function ScanScreen({ navigation }) {
 
     setLoading(true);
     try {
-      const response = await fetchTrackingByCode(value);
+      const response = await fetchTrackingByCode(value, { language });
       const data = response.data;
 
       const hasPackages = Array.isArray(data?.packages) && data.packages.length > 0;
@@ -305,7 +305,7 @@ export default function ScanScreen({ navigation }) {
     setLoadingText(nextLoadingText);
     setLoading(true);
     try {
-      const response = await fetchTrackingByCode(validated.value);
+      const response = await fetchTrackingByCode(validated.value, { language });
       setCodigo("");
       navigation.navigate("Result", { data: response.data });
     } catch (e) {

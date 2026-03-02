@@ -61,8 +61,8 @@ export default function DeliveredPackagesScreen({ navigation }) {
       dateRaw: source === "local" ? ev?.updated_at || ev?.created_at || null : ev?.eventDate || null,
       eventType:
         source === "local"
-          ? localizeEventAction(ev?.action, t)
-          : localizeExternalEventType(ev?.eventType, t),
+          ? localizeEventAction(ev?.action, t, language)
+          : localizeExternalEventType(ev?.eventType, t, language),
       office: ev?.office || "",
       condition: ev?.condition || "",
       nextOffice: ev?.nextOffice || "",
@@ -92,7 +92,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
       await Promise.all(
         list.map(async (p) => {
           try {
-            const response = await fetchTrackingByCode(p.code);
+            const response = await fetchTrackingByCode(p.code, { language });
 
             const externos = response.data?.eventos_externos || [];
             const locales = response.data?.eventos_locales || [];
@@ -135,7 +135,11 @@ export default function DeliveredPackagesScreen({ navigation }) {
   useEffect(() => {
     const unsubscribe = navigation.addListener("focus", loadPackages);
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, language]);
+
+  useEffect(() => {
+    loadPackages();
+  }, [language]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

@@ -38,14 +38,14 @@ export default function ResultScreen({ route }) {
     setRefreshingData(true);
     setRefreshError("");
     try {
-      const response = await fetchTrackingByCode(codigo);
+      const response = await fetchTrackingByCode(codigo, { language });
       setData(response.data);
     } catch {
       setRefreshError(t("result.refreshError", "Could not update. Showing available data."));
     } finally {
       setRefreshingData(false);
     }
-  }, [initialData?.codigo, t]);
+  }, [initialData?.codigo, t, language]);
 
   useFocusEffect(
     useCallback(() => {
@@ -113,8 +113,8 @@ export default function ResultScreen({ route }) {
         dateRaw: ev?.created_at || ev?.updated_at || null,
         date: toDate(ev?.created_at || ev?.updated_at),
         dayParts: parseRawDateParts(ev?.created_at || ev?.updated_at || null),
-        title: localizeEventAction(ev?.action, t),
-        subtitle: localizeTrackingBody(ev?.descripcion || "", t),
+        title: localizeEventAction(ev?.action, t, language),
+        subtitle: localizeTrackingBody(ev?.descripcion || "", t, language),
         office: "",
         condition: "",
         nextOffice: "",
@@ -127,7 +127,7 @@ export default function ResultScreen({ route }) {
         dateRaw: ev?.eventDate || null,
         date: toDate(ev?.eventDate),
         dayParts: parseRawDateParts(ev?.eventDate || null),
-        title: localizeExternalEventType(ev?.eventType, t),
+        title: localizeExternalEventType(ev?.eventType, t, language),
         subtitle: "",
         country: ev?.country || "",
         countryIso2: ev?.countryIso2 || "",
@@ -142,7 +142,7 @@ export default function ResultScreen({ route }) {
     ext.sort((a, b) => b.date - a.date);
 
     return [...loc, ...ext];
-  }, [localesRaw, externosRaw, t]);
+  }, [localesRaw, externosRaw, t, language]);
 
   const isHighlightedEvent = (ev) => {
     if (!highlight) return false;
@@ -242,30 +242,26 @@ export default function ResultScreen({ route }) {
                 <View style={styles.dayHeader}>
                   <Ionicons name="calendar-outline" size={16} color={colors.muted} />
                   <Text style={styles.dayText}>{g.dayLabel}</Text>
-                  <View style={styles.dayPill}>
-                    <Text style={styles.dayPillText}>{g.events.length}</Text>
-                  </View>
+                  <Text style={styles.dayCount}>
+                    {g.events.length} {t("result.events", "Eventos")}
+                  </Text>
                 </View>
 
                 <View style={{ marginTop: 10 }}>
                   {g.events.map((ev, idx) => (
                     <View key={`${g.dayKey}-${idx}`} style={styles.timelineRow}>
                       <View style={styles.lineCol}>
-                        <View style={[styles.dot, { backgroundColor: colors.primary }]} />
-                        {idx !== g.events.length - 1 ? <View style={styles.line} /> : <View style={styles.lineEnd} />}
+                        <Text style={styles.traceTime}>{niceTime(ev.dateRaw) || "--:--"}</Text>
+                        <View style={styles.traceRail}>
+                          <View style={[styles.dot, { backgroundColor: colors.primary }]} />
+                          {idx !== g.events.length - 1 ? <View style={styles.line} /> : <View style={styles.lineEnd} />}
+                        </View>
                       </View>
 
                       <View style={{ flex: 1 }}>
                         <Card style={[styles.eventCard, isHighlightedEvent(ev) ? styles.eventCardNew : null]}>
                           <View style={styles.topRow}>
                             <Text style={styles.eventType}>{ev.title}</Text>
-
-                            {!!niceTime(ev.dateRaw) && (
-                              <View style={styles.timePill}>
-                                <Ionicons name="time-outline" size={14} color={colors.muted} />
-                                <Text style={styles.timeText}>{niceTime(ev.dateRaw)}</Text>
-                              </View>
-                            )}
                           </View>
 
                           {isHighlightedEvent(ev) ? (
@@ -277,29 +273,41 @@ export default function ResultScreen({ route }) {
 
                           {!!ev.subtitle && <Text style={styles.subtitle}>{ev.subtitle}</Text>}
 
-                          <View style={styles.divider} />
+                          {(ev.office ||
+                            ev.nextOffice ||
+                            localizeCountryName(ev.country, ev.countryIso2, language)) && (
+                            <>
+                              <View style={styles.divider} />
 
-                          <InfoRow label={t("result.office", "Office")} value={ev.office} icon="business-outline" theme={theme} styles={styles} />
-                          <InfoRow
-                            label={
-                              ev.countrySource === "S10_ORIGIN_INFERRED"
-                                ? t("result.countryOrigin", "PaÃ­s Origen")
-                                : ev.countrySource === "S10_DESTINATION_INFERRED"
-                                ? t("result.countryDestination", "PaÃ­s Destino")
-                                : t("result.country", "PaÃ­s")
-                            }
-                            value={localizeCountryName(ev.country, ev.countryIso2, language)}
-                            icon="flag-outline"
-                            theme={theme}
-                            styles={styles}
-                          />
-                          <InfoRow
-                            label={t("result.nextOffice", "Next office")}
-                            value={ev.nextOffice}
-                            icon="navigate-outline"
-                            theme={theme}
-                            styles={styles}
-                          />
+                              <InfoRow
+                                label={t("result.office", "Office")}
+                                value={ev.office}
+                                icon="business-outline"
+                                theme={theme}
+                                styles={styles}
+                              />
+                              <InfoRow
+                                label={
+                                  ev.countrySource === "S10_ORIGIN_INFERRED"
+                                    ? t("result.countryOrigin", "PaÃ­s Origen")
+                                    : ev.countrySource === "S10_DESTINATION_INFERRED"
+                                    ? t("result.countryDestination", "PaÃ­s Destino")
+                                    : t("result.country", "PaÃ­s")
+                                }
+                                value={localizeCountryName(ev.country, ev.countryIso2, language)}
+                                icon="flag-outline"
+                                theme={theme}
+                                styles={styles}
+                              />
+                              <InfoRow
+                                label={t("result.nextOffice", "Next office")}
+                                value={ev.nextOffice}
+                                icon="navigate-outline"
+                                theme={theme}
+                                styles={styles}
+                              />
+                            </>
+                          )}
                         </Card>
                       </View>
                     </View>
@@ -359,34 +367,26 @@ const createStyles = (t) =>
       flexDirection: "row",
       alignItems: "center",
       gap: 8,
-      paddingVertical: 10,
-      paddingHorizontal: 12,
-      borderRadius: 999,
+      paddingVertical: 8,
+      paddingHorizontal: 2,
+      borderRadius: 8,
       borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.7)" : "rgba(255,255,255,0.7)",
+      borderColor: "transparent",
+      borderBottomColor: t.colors.border,
+      backgroundColor: "transparent",
     },
     dayText: { fontWeight: "900", color: t.colors.text, flex: 1 },
-    dayPill: {
-      minWidth: 28,
-      height: 28,
-      borderRadius: 14,
-      backgroundColor: `${t.colors.primary}18`,
-      borderWidth: 1,
-      borderColor: `${t.colors.primary}33`,
-      alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 8,
-    },
-    dayPillText: { fontWeight: "900", color: t.colors.primary },
+    dayCount: { fontWeight: "700", color: t.colors.muted, fontSize: 12 },
 
-    timelineRow: { flexDirection: "row", gap: 12, marginBottom: 12, alignItems: "stretch" },
-    lineCol: { width: 18, alignItems: "center" },
-    dot: { width: 10, height: 10, borderRadius: 5, marginTop: 18 },
-    line: { flex: 1, width: 2, backgroundColor: t.colors.border, marginTop: 6, borderRadius: 2 },
+    timelineRow: { flexDirection: "row", gap: 10, marginBottom: 10, alignItems: "stretch" },
+    lineCol: { width: 62, alignItems: "center", paddingTop: 12 },
+    traceTime: { fontSize: 12, fontWeight: "800", color: t.colors.muted, marginBottom: 8 },
+    traceRail: { flex: 1, width: 12, alignItems: "center" },
+    dot: { width: 8, height: 8, borderRadius: 4 },
+    line: { flex: 1, width: 2, backgroundColor: t.colors.border, marginTop: 5, borderRadius: 2 },
     lineEnd: { flex: 1, width: 2, backgroundColor: "transparent" },
 
-    eventCard: { padding: t.spacing.lg },
+    eventCard: { padding: t.spacing.md, borderRadius: t.radius.lg },
     eventCardNew: {
       borderColor: `${t.colors.success}66`,
       borderWidth: 2,
@@ -412,22 +412,9 @@ const createStyles = (t) =>
     subtitle: {
       marginTop: 8,
       color: t.colors.text,
-      opacity: 0.85,
-      fontWeight: "700",
+      opacity: 0.8,
+      fontWeight: "600",
     },
-
-    timePill: {
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 6,
-      paddingVertical: 6,
-      paddingHorizontal: 10,
-      borderRadius: 999,
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.7)" : "rgba(255,255,255,0.7)",
-    },
-    timeText: { fontWeight: "900", color: t.colors.muted, fontSize: 12 },
 
     divider: {
       height: 1,

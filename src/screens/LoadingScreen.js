@@ -5,7 +5,6 @@ import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 
 const APP_LOGO = require("../../assets/logoincio-start.png");
-const PACKAGE_BOX = require("../../paquete-caja-entrega-modelo-3d.webp");
 
 export default function LoadingScreen({ navigation }) {
   const theme = useTheme();
@@ -13,13 +12,11 @@ export default function LoadingScreen({ navigation }) {
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
   const bar = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
-  const packageTravel = useRef(new Animated.Value(0)).current;
-  const packageHop = useRef(new Animated.Value(0)).current;
+  const halo = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     // Warm up local assets to reduce first paint delay on Android.
     Asset.fromModule(APP_LOGO).downloadAsync().catch(() => {});
-    Asset.fromModule(PACKAGE_BOX).downloadAsync().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -39,30 +36,25 @@ export default function LoadingScreen({ navigation }) {
         }),
       ])
     );
+    const haloAnim = Animated.loop(
+      Animated.sequence([
+        Animated.timing(halo, {
+          toValue: 1,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(halo, {
+          toValue: 0,
+          duration: 1400,
+          easing: Easing.inOut(Easing.quad),
+          useNativeDriver: true,
+        }),
+      ])
+    );
 
     shimmerAnim.start();
-    Animated.sequence([
-      Animated.timing(packageTravel, {
-        toValue: 1,
-        duration: 920,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.sequence([
-        Animated.timing(packageHop, {
-          toValue: 1,
-          duration: 180,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: true,
-        }),
-        Animated.timing(packageHop, {
-          toValue: 0,
-          duration: 260,
-          easing: Easing.in(Easing.quad),
-          useNativeDriver: true,
-        }),
-      ]),
-    ]).start();
+    haloAnim.start();
     Animated.timing(bar, {
       toValue: 1,
       duration: 2200,
@@ -76,41 +68,26 @@ export default function LoadingScreen({ navigation }) {
 
     return () => {
       shimmerAnim.stop();
+      haloAnim.stop();
       clearTimeout(navigationTimer);
     };
-  }, [bar, navigation, shimmer, packageTravel, packageHop]);
+  }, [bar, navigation, shimmer, halo]);
 
   const barWidth = bar.interpolate({ inputRange: [0, 1], outputRange: ["18%", "100%"] });
   const shimmerTranslate = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-80, 180] });
-  const packageTranslateX = packageTravel.interpolate({ inputRange: [0, 1], outputRange: [180, 0] });
-  const packageRotate = packageTravel.interpolate({
-    inputRange: [0, 0.82, 1],
-    outputRange: ["-10deg", "2deg", "0deg"],
-  });
-  const packageTranslateY = packageHop.interpolate({ inputRange: [0, 1], outputRange: [0, -10] });
-  const trailOpacity = packageTravel.interpolate({ inputRange: [0, 0.7, 1], outputRange: [0.75, 0.4, 0.08] });
-  const trailScaleX = packageTravel.interpolate({ inputRange: [0, 1], outputRange: [1, 0.45] });
+  const haloScale = halo.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.06] });
+  const haloOpacity = halo.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.12] });
 
   return (
     <View style={styles.root}>
       <View style={styles.topAccent} />
+      <View style={[styles.bgOrb, styles.bgOrbPrimary]} />
+      <View style={[styles.bgOrb, styles.bgOrbSoft]} />
       <View style={styles.backdropBand} />
 
       <View style={styles.centerPanel}>
-        <View style={styles.arrivalZone}>
-          <View style={styles.arrivalTrack} />
-          <Animated.View style={[styles.arrivalTrail, { opacity: trailOpacity, transform: [{ scaleX: trailScaleX }] }]} />
-          <Animated.View
-            style={[
-              styles.packageWrap,
-              { transform: [{ translateX: packageTranslateX }, { translateY: packageTranslateY }, { rotate: packageRotate }] },
-            ]}
-          >
-            <Image source={PACKAGE_BOX} style={styles.packageImage} resizeMode="contain" />
-          </Animated.View>
-        </View>
-
         <View style={styles.logoWrap}>
+          <Animated.View style={[styles.logoHalo, { opacity: haloOpacity, transform: [{ scale: haloScale }] }]} />
           <Image
             source={APP_LOGO}
             style={styles.logoImage}
@@ -145,82 +122,73 @@ const createStyles = (t) =>
       top: 0,
       left: 0,
       right: 0,
-      height: 5,
+      height: 4,
       backgroundColor: t.colors.primary,
-      opacity: 0.88,
+      opacity: 0.9,
+    },
+    bgOrb: {
+      position: "absolute",
+      borderRadius: 999,
+    },
+    bgOrbPrimary: {
+      width: 260,
+      height: 260,
+      right: -90,
+      top: 70,
+      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.08)" : "rgba(254, 204, 54, 0.12)",
+    },
+    bgOrbSoft: {
+      width: 220,
+      height: 220,
+      left: -110,
+      bottom: 120,
+      backgroundColor: t.isDark ? "rgba(148, 163, 184, 0.1)" : "rgba(203, 213, 225, 0.18)",
     },
     backdropBand: {
       position: "absolute",
-      top: 56,
+      top: 64,
       left: 0,
       right: 0,
-      height: 58,
-      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.06)" : "rgba(254, 204, 54, 0.08)",
+      height: 46,
+      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.04)" : "rgba(254, 204, 54, 0.06)",
     },
     centerPanel: {
       width: "100%",
-      maxWidth: 420,
-      borderRadius: 20,
-      paddingHorizontal: 22,
-      paddingVertical: 24,
-      backgroundColor: t.colors.surface,
+      maxWidth: 430,
+      borderRadius: 24,
+      paddingHorizontal: 24,
+      paddingVertical: 26,
+      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.78)" : "rgba(255,255,255,0.86)",
       borderWidth: 1,
       borderColor: t.colors.border,
-      borderTopWidth: 3,
+      borderTopWidth: 2,
       borderTopColor: t.colors.primary,
       alignItems: "center",
       ...t.shadowStrong,
-    },
-    arrivalZone: {
-      width: "100%",
-      height: 70,
-      marginBottom: 10,
-      justifyContent: "center",
-      overflow: "hidden",
-    },
-    arrivalTrack: {
-      position: "absolute",
-      left: 0,
-      right: 0,
-      height: 2,
-      borderRadius: 999,
-      backgroundColor: t.isDark ? "rgba(42, 58, 82, 0.82)" : "rgba(218, 166, 17, 0.18)",
-    },
-    arrivalTrail: {
-      position: "absolute",
-      left: 34,
-      width: 140,
-      height: 4,
-      borderRadius: 999,
-      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.18)" : "rgba(254, 204, 54, 0.28)",
-    },
-    packageWrap: {
-      position: "absolute",
-      right: 44,
-      width: 62,
-      height: 62,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    packageImage: {
-      width: 56,
-      height: 56,
     },
     logoWrap: {
       width: "100%",
       alignItems: "center",
       justifyContent: "center",
       marginBottom: t.spacing.md,
+      position: "relative",
+    },
+    logoHalo: {
+      position: "absolute",
+      width: 220,
+      height: 220,
+      borderRadius: 999,
+      backgroundColor: `${t.colors.primary}33`,
     },
     logoImage: {
-      width: "86%",
-      height: 138,
+      width: "88%",
+      height: 132,
     },
     barTrack: {
       width: "100%",
-      height: 10,
+      height: 9,
       borderRadius: 999,
-      backgroundColor: t.isDark ? "#2A3A52" : "#F3E8BF",
+      backgroundColor: t.isDark ? "rgba(51, 65, 85, 0.7)" : "#F3E8BF",
       overflow: "hidden",
       marginTop: t.spacing.md,
       borderWidth: 1,
@@ -242,9 +210,9 @@ const createStyles = (t) =>
     },
     caption: {
       ...t.typography.p,
-      marginTop: t.spacing.md,
+      marginTop: t.spacing.sm,
       color: t.colors.muted,
-      fontWeight: "800",
+      fontWeight: "700",
       textAlign: "center",
     },
   });
