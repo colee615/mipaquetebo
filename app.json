@@ -4,7 +4,7 @@
     "slug": "scannerapp",
     "version": "1.0.0",
     "orientation": "default",
-    "icon": "./MiPaqueteBo_Android_Icons/master-1024.png",
+    "icon": "./movilrastreo1.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -17,7 +17,7 @@
       "usesCleartextTraffic": true,
       "package": "com.colee_615.scannerapp",
       "adaptiveIcon": {
-        "foregroundImage": "./MiPaqueteBo_Android_Icons/master-1024.png",
+        "foregroundImage": "./movilrastreo1.png",
         "backgroundColor": "#20539A"
       },
       "googleServicesFile": "./google-services.json",
@@ -30,7 +30,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./MiPaqueteBo_Android_Icons/master-1024.png",
+          "icon": "./movilrastreo1.png",
           "color": "#FECC36"
         }
       ]
