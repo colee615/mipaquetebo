@@ -13,6 +13,7 @@ import {
   localizeExternalEventType,
   localizeTrackingBody,
   localizeCountryName,
+  formatDaysAgo,
 } from "../utils/eventText";
 
 export default function ResultScreen({ route }) {
@@ -72,6 +73,7 @@ export default function ResultScreen({ route }) {
 
   const codigo = data?.codigo || "-";
   const meta = data?.meta_tracking || {};
+  const metaCache = data?.meta_cache || {};
 
   const localesRaw = Array.isArray(data?.eventos_locales) ? data.eventos_locales : [];
   const externosRaw = Array.isArray(data?.eventos_externos) ? data.eventos_externos : [];
@@ -105,6 +107,12 @@ export default function ResultScreen({ route }) {
     if (!parts) return "";
     return parts.timeLabel;
   };
+
+  const cacheAgeLabel = useMemo(() => {
+    if (!metaCache?.savedAt) return "";
+    const days = Math.max(0, Math.floor((Date.now() - Number(metaCache.savedAt)) / (1000 * 60 * 60 * 24)));
+    return formatDaysAgo(days, language);
+  }, [metaCache?.savedAt, language]);
 
   const normalized = useMemo(() => {
     const loc = localesRaw
@@ -200,7 +208,22 @@ export default function ResultScreen({ route }) {
 
           <View style={styles.headerRow}>
             <Chip text={`${t("result.events", "Eventos")}: ${normalized.length}`} color={colors.primary} icon="trail-sign-outline" numberOfLines={1} />
+            {metaCache?.fromCache ? (
+              <Chip
+                text={t("result.cacheBadge", "Showing cache")}
+                color={metaCache?.stale ? colors.warning : colors.success}
+                icon={metaCache?.stale ? "warning-outline" : "cloud-done-outline"}
+                numberOfLines={1}
+              />
+            ) : null}
           </View>
+          {metaCache?.fromCache ? (
+            <Text style={styles.cacheText}>
+              {metaCache?.stale
+                ? `${t("result.cacheStale", "Data saved a while ago")}${cacheAgeLabel ? ` (${cacheAgeLabel})` : ""}`
+                : t("result.cacheFresh", "Recently saved data")}
+            </Text>
+          ) : null}
           {meta?.currentCountry ? (
             <View style={styles.headerCountryRow}>
               <Chip
@@ -354,6 +377,12 @@ const createStyles = (t) =>
       letterSpacing: 0.4,
     },
     headerRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+    cacheText: {
+      marginTop: 8,
+      color: t.colors.muted,
+      fontWeight: "700",
+      fontSize: 12,
+    },
     headerCountryRow: { marginTop: 8 },
     countryChip: { width: "100%" },
 

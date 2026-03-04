@@ -2,9 +2,10 @@ import axios from "axios";
 import Constants from "expo-constants";
 
 const extra = Constants?.expoConfig?.extra || Constants?.manifest2?.extra || {};
+const envToken = (process?.env?.EXPO_PUBLIC_API_BEARER_TOKEN || "").trim();
 
 const API_BASE_URL = (extra.apiBaseUrl || "").trim();
-const API_BEARER_TOKEN = (extra.apiBearerToken || "").trim();
+const API_BEARER_TOKEN = envToken || (extra.apiBearerToken || "").trim();
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL || undefined,
@@ -16,6 +17,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export const getApiConfig = () => ({
   baseUrl: API_BASE_URL,
   hasToken: !!API_BEARER_TOKEN,
+  tokenSource: envToken ? "env" : extra.apiBearerToken ? "embedded" : "none",
 });
 
 export const buildAuthHeaders = (headers = {}) => {
@@ -97,4 +99,3 @@ export const postApiWithRetry = async (path, payload, options = {}) => {
 
   throw lastError;
 };
-

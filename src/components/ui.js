@@ -99,7 +99,7 @@ export function Chip({ text, color, icon, style, textStyle, numberOfLines = 2 })
   );
 }
 
-export function PrimaryButton({ title, icon, onPress, loading, style }) {
+export function PrimaryButton({ title, icon, onPress, loading, style, accessibilityLabel, accessibilityHint, ...touchableProps }) {
   const theme = useTheme();
   const { t } = useI18n();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
@@ -122,6 +122,10 @@ export function PrimaryButton({ title, icon, onPress, loading, style }) {
         onPressOut={pressOut}
         style={[styles.btnWrap, style]}
         disabled={loading}
+        accessibilityRole="button"
+        accessibilityLabel={accessibilityLabel || title}
+        accessibilityHint={accessibilityHint}
+        {...touchableProps}
       >
         <LinearGradient colors={[theme.colors.primary, theme.colors.primaryDark || theme.colors.primary]} style={styles.btnGrad}>
           {icon ? <Ionicons name={icon} size={18} color={theme.colors.secondary} /> : null}
@@ -132,7 +136,7 @@ export function PrimaryButton({ title, icon, onPress, loading, style }) {
   );
 }
 
-export function OutlineButton({ title, icon, onPress, style, iconColor, transparent }) {
+export function OutlineButton({ title, icon, onPress, style, iconColor, transparent, accessibilityLabel, accessibilityHint, ...touchableProps }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
   const handlePress = async () => {
@@ -145,6 +149,10 @@ export function OutlineButton({ title, icon, onPress, style, iconColor, transpar
       activeOpacity={0.9}
       onPress={handlePress}
       style={[styles.outline, transparent ? styles.outlineTransparent : null, style]}
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel || title}
+      accessibilityHint={accessibilityHint}
+      {...touchableProps}
     >
       {icon ? <Ionicons name={icon} size={18} color={iconColor || theme.colors.primary} /> : null}
       <Text style={styles.outlineText}>{title}</Text>
@@ -152,7 +160,7 @@ export function OutlineButton({ title, icon, onPress, style, iconColor, transpar
   );
 }
 
-export function AppInput({ value, onChangeText, placeholder, icon, autoCapitalize = "none", inputRef, ...inputProps }) {
+export function AppInput({ value, onChangeText, placeholder, icon, autoCapitalize = "none", inputRef, accessibilityLabel, ...inputProps }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
   const [focused, setFocused] = useState(false);
@@ -166,6 +174,7 @@ export function AppInput({ value, onChangeText, placeholder, icon, autoCapitaliz
         placeholder={placeholder}
         placeholderTextColor={theme.colors.muted}
         autoCapitalize={autoCapitalize}
+        accessibilityLabel={accessibilityLabel || placeholder}
         style={styles.input}
         {...inputProps}
         onFocus={(e) => {

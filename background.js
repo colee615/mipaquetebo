@@ -108,7 +108,7 @@ function buildNotificationContent(pkg, latest, sig) {
   const eventTitle = (latest?.eventTitle || "Actualizacion registrada").trim();
 
   return {
-    title: "Mi PaqueteBO | Actualizacion de envio",
+    title: "TrackingBo App | Actualizacion de envio",
     body: `Paquete: ${packageName}\nCodigo: ${pkg.code}\nEvento: ${eventTitle}`,
     sound: true,
     data: {

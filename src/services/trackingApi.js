@@ -43,6 +43,7 @@ export const fetchTrackingByCode = async (codigo, options = {}) => {
         fromCache: false,
         stale: false,
         savedAt: Date.now(),
+        ageMs: 0,
       },
     };
     await writeCache(codigo, rawWithCacheMeta);
@@ -63,6 +64,7 @@ export const fetchTrackingByCode = async (codigo, options = {}) => {
         fromCache: true,
         stale,
         savedAt: cached.savedAt,
+        ageMs: age,
         fallbackReason: "NETWORK_OR_SERVER_ERROR",
       },
     };

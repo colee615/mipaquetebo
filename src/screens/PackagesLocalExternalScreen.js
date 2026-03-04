@@ -16,9 +16,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } from "../components/ui";
-import { getApiErrorMessage, postApiWithRetry } from "../config/api";
+import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
-import { formatDaysAgo, localizeEventAction, localizeExternalEventType } from "../utils/eventText";
+import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
+import { formatPackageEventSummary, getLatestPackageEvent } from "../utils/packageEvents";
 
 export default function DeliveredPackagesScreen({ navigation }) {
   const theme = useTheme();
@@ -40,42 +41,9 @@ export default function DeliveredPackagesScreen({ navigation }) {
 
   const [snack, setSnack] = useState({ visible: false, text: "", type: "info" });
   const showSnack = (text, type = "info") => setSnack({ visible: true, text, type });
-  const apiErrorText = (error, overrides = {}) =>
-    getApiErrorMessage(error, {
-      config: t("api.config", "API configuration is incomplete"),
-      timeout: t("api.timeout", "The request took too long, please try again"),
-      network: t("api.network", "Could not connect to the server"),
-      invalidCode: t("api.invalidCode", "Invalid or not found code"),
-      auth: t("api.auth", "Invalid API credentials"),
-      server: t("api.server", "The server encountered a problem"),
-      http: t("api.http", "Error while requesting data"),
-      unknown: t("api.unknown", "An unexpected error occurred"),
-      ...overrides,
-    });
+  const apiErrorText = (error, overrides = {}) => getLocalizedApiErrorMessage(t, error, overrides);
 
   const ENABLE_SUBSCRIBE = true;
-
-  const getLatestEvent = (locales = [], externos = []) => {
-    const normalize = (ev, source) => ({
-      source,
-      dateRaw: source === "local" ? ev?.updated_at || ev?.created_at || null : ev?.eventDate || null,
-      eventType:
-        source === "local"
-          ? localizeEventAction(ev?.action, t, language)
-          : localizeExternalEventType(ev?.eventType, t, language),
-      office: ev?.office || "",
-      condition: ev?.condition || "",
-      nextOffice: ev?.nextOffice || "",
-    });
-
-    const all = [
-      ...(Array.isArray(locales) ? locales.map((ev) => normalize(ev, "local")) : []),
-      ...(Array.isArray(externos) ? externos.map((ev) => normalize(ev, "external")) : []),
-    ].filter((ev) => !!ev.dateRaw);
-    if (all.length === 0) return null;
-    all.sort((a, b) => new Date(b.dateRaw) - new Date(a.dateRaw));
-    return all[0];
-  };
 
   const loadPackages = async () => {
     try {
@@ -101,7 +69,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
             const hasLocales = Array.isArray(locales) && locales.length > 0;
 
             if (hasLocales && hasExternos) {
-              const last = getLatestEvent(locales, externos);
+              const last = getLatestPackageEvent(locales, externos, t, language);
 
               newEventsData[p.code] = {
                 lastEvent: last,
@@ -151,25 +119,6 @@ export default function DeliveredPackagesScreen({ navigation }) {
       return name.includes(q) || code.includes(q);
     });
   }, [packages, query]);
-
-  const formatLastEvent = (ev) => {
-    if (!ev?.dateRaw) return t("delivered.noRecentUpdates", "No recent updates");
-    const normalized = String(ev.dateRaw).replace("T", " ").replace("Z", "");
-    const m = normalized.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2})/);
-    if (!m) return t("delivered.noRecentUpdates", "No recent updates");
-    const [, y, mo, d] = m;
-    const eventDate = new Date(`${y}-${mo}-${d}T00:00:00`);
-    const today = new Date();
-
-    const t0 = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
-    const e0 = new Date(eventDate.getFullYear(), eventDate.getMonth(), eventDate.getDate()).getTime();
-
-    const days = Math.floor((t0 - e0) / (1000 * 60 * 60 * 24));
-    const dateStr = `${d}/${mo}/${y}`;
-
-    const ago = formatDaysAgo(days, language);
-    return `${ev.eventType} \u00B7 ${dateStr} \u00B7 ${ago}`;
-  };
 
   const deletePackage = async (code) => {
     Alert.alert(t("delivered.deleteTitle", "Delete package"), t("delivered.deleteBody", "Do you want to remove this package from your saved list?"), [
@@ -275,7 +224,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
               <Chip text={`${t("delivered.recordsPrefix", "Records")}: ${counts.locales + counts.externos}`} color={colors.secondary} icon="list-outline" />
             </View>
 
-            {last ? <Text style={styles.lastEvent}>{formatLastEvent(last)}</Text> : null}
+            {last ? <Text style={styles.lastEvent}>{formatPackageEventSummary(last, t, language, "delivered.noRecentUpdates")}</Text> : null}
 
             <View style={[styles.rowWrap, { marginTop: 6, justifyContent: "flex-end" }]}>
               <TouchableOpacity
@@ -321,6 +270,10 @@ export default function DeliveredPackagesScreen({ navigation }) {
           keyExtractor={(item) => item.code}
           renderItem={renderItem}
           ListEmptyComponent={renderEmpty}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={7}
+          removeClippedSubviews
           refreshing={refreshing}
           onRefresh={loadPackages}
           showsVerticalScrollIndicator={false}

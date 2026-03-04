@@ -8,9 +8,11 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 import { Screen, Card, PrimaryButton, OutlineButton, AppInput, Snackbar, Chip } from "../components/ui";
-import { getApiErrorMessage, postApiWithRetry } from "../config/api";
+import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { validateTrackingCode } from "../utils/tracking";
+import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
+import { useGuideProgress } from "../hooks/useGuideProgress";
 
 export default function ScanScreen({ navigation }) {
   const theme = useTheme();
@@ -37,18 +39,7 @@ export default function ScanScreen({ navigation }) {
 
   const [snack, setSnack] = useState({ visible: false, text: "", type: "info" });
   const showSnack = (text, type = "info") => setSnack({ visible: true, text, type });
-  const apiErrorText = (error, overrides = {}) =>
-    getApiErrorMessage(error, {
-      config: t("api.config", "API configuration is incomplete"),
-      timeout: t("api.timeout", "The request took too long, please try again"),
-      network: t("api.network", "Could not connect to the server"),
-      invalidCode: t("api.invalidCode", "Invalid or not found code"),
-      auth: t("api.auth", "Invalid API credentials"),
-      server: t("api.server", "The server encountered a problem"),
-      http: t("api.http", "Error while requesting data"),
-      unknown: t("api.unknown", "An unexpected error occurred"),
-      ...overrides,
-    });
+  const apiErrorText = (error, overrides = {}) => getLocalizedApiErrorMessage(t, error, overrides);
   const [debugToken, setDebugToken] = useState("");
   const [subscribeStatus, setSubscribeStatus] = useState("");
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -66,10 +57,13 @@ export default function ScanScreen({ navigation }) {
 
   const ENABLE_SUBSCRIBE = true;
   const GUIDE_KEY = "scan_onboarding_seen_v1";
+  const GUIDE_STEP_KEY = "scan_onboarding_step_v1";
+  const GUIDE_TARGET_Y_OFFSET = 18;
+  const GUIDE_SCROLL_TOP_OFFSET = 90;
   const GUIDE_STEPS = useMemo(
     () => [
       {
-        title: t("scan.guide.welcome.title", "Welcome to Mi PaqueteBO"),
+        title: t("scan.guide.welcome.title", "Welcome to TrackingBo App"),
         text: t("scan.guide.welcome.body", "Here you can scan or type your code to view package tracking."),
         target: "hero",
       },
@@ -91,6 +85,15 @@ export default function ScanScreen({ navigation }) {
     ],
     [t]
   );
+  const {
+    restoreProgress,
+    saveStep: saveGuideStep,
+    completeGuide,
+  } = useGuideProgress({
+    seenKey: GUIDE_KEY,
+    stepKey: GUIDE_STEP_KEY,
+    totalSteps: GUIDE_STEPS.length,
+  });
 
   useEffect(() => {
     const onBackPress = () => {
@@ -122,15 +125,17 @@ export default function ScanScreen({ navigation }) {
 
   useEffect(() => {
     (async () => {
-      try {
-        const seen = await AsyncStorage.getItem(GUIDE_KEY);
-        if (!seen) {
-          setGuideStep(0);
-          setGuideVisible(true);
-        }
-      } catch {}
+      const state = await restoreProgress();
+      if (!state.shouldShow) return;
+      setGuideStep(state.step);
+      setGuideVisible(true);
     })();
-  }, []);
+  }, [restoreProgress]);
+
+  useEffect(() => {
+    if (!guideVisible) return;
+    saveGuideStep(guideStep);
+  }, [guideStep, guideVisible, saveGuideStep]);
 
   useEffect(() => {
     if (!guideVisible) return;
@@ -171,7 +176,13 @@ export default function ScanScreen({ navigation }) {
 
     // Ignore stale async measurements from previous scroll/step positions.
     if (seq !== guideMeasureSeq.current) return;
-    setGuideAnchors({ hero, scan, input, saved });
+    const shiftAnchorDown = (a) => (a ? { ...a, y: a.y + GUIDE_TARGET_Y_OFFSET } : null);
+    setGuideAnchors({
+      hero: shiftAnchorDown(hero),
+      scan: shiftAnchorDown(scan),
+      input: shiftAnchorDown(input),
+      saved: shiftAnchorDown(saved),
+    });
   };
 
   const captureGuideOffset = (key) => (e) => {
@@ -185,7 +196,7 @@ export default function ScanScreen({ navigation }) {
     const target = GUIDE_STEPS[guideStep]?.target;
     const y = guideOffsets[target];
     if (typeof y === "number" && scrollRef.current?.scrollTo) {
-      scrollRef.current.scrollTo({ y: Math.max(0, y - 110), animated: true });
+      scrollRef.current.scrollTo({ y: Math.max(0, y - GUIDE_SCROLL_TOP_OFFSET), animated: true });
     }
     const t = setTimeout(() => {
       measureGuideAnchors();
@@ -201,9 +212,7 @@ export default function ScanScreen({ navigation }) {
 
   const closeGuide = async () => {
     setGuideVisible(false);
-    try {
-      await AsyncStorage.setItem(GUIDE_KEY, "1");
-    } catch {}
+    await completeGuide();
   };
 
   const nextGuideStep = async () => {
@@ -462,7 +471,7 @@ export default function ScanScreen({ navigation }) {
           keyboardDismissMode="on-drag"
         >
           <View ref={heroRef} collapsable={false} onLayout={captureGuideOffset("hero")} style={styles.hero}>
-            <Text style={styles.heroKicker}>MI PAQUETEBO</Text>
+            <Text style={styles.heroKicker}>TRACKINGBO APP</Text>
             <Text style={styles.title}>{t("scan.title", "Rastreo de envÃ­os")}</Text>
             <Text style={styles.subtitle}>{t("scan.subtitle", "Consulta con el cÃ³digo o escanea con la cÃ¡mara.")}</Text>
             <View style={styles.heroRow}>
