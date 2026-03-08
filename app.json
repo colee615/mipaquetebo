@@ -3,12 +3,12 @@
     "name": "TrackingBo App",
     "slug": "scannerapp",
     "version": "1.0.0",
-    "orientation": "default",
-    "icon": "./movilrastreo1.png",
+    "orientation": "portrait",
+    "icon": "./app_icon_full_v6.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
-      "backgroundColor": "#20539A"
+      "backgroundColor": "#fed122"
     },
     "ios": {
       "supportsTablet": true
@@ -16,10 +16,10 @@
     "android": {
       "usesCleartextTraffic": true,
       "package": "com.colee_615.scannerapp",
-      "icon": "./movilrastreo1.png",
+      "icon": "./app_icon_full_v6.png",
       "adaptiveIcon": {
-        "foregroundImage": "./adaptive_foreground.png",
-        "backgroundColor": "#FECC36"
+        "foregroundImage": "./app_icon_full_v6.png",
+        "backgroundColor": "#fed122"
       },
       "googleServicesFile": "./google-services.json",
       "useNextNotificationsApi": true,
@@ -40,7 +40,7 @@
       "apiBaseUrl": "https://trackingbo.correos.gob.bo:8100",
       "apiBearerToken": "eZMlItx6mQMNZjxoijEvf7K3pYvGGXMvEHmQcqvtlAPOEAPgyKDVOpyF7JP0ilbK",
       "eas": {
-        "projectId": "c147743f-5015-4ef0-b372-8dac371d0f39"
+        "projectId": "b515cfef-a58e-46ca-a970-9e43900e0728"
       }
     },
     "owner": ""
