@@ -44,9 +44,7 @@ export async function translateText(text, targetLanguage = "en") {
 
 export async function translateTrackingPayload(payload, language = "es") {
   if (!payload || language !== "en") return payload;
-
-  const locales = Array.isArray(payload.eventos_locales) ? payload.eventos_locales : [];
-  const externos = Array.isArray(payload.eventos_externos) ? payload.eventos_externos : [];
+  const results = Array.isArray(payload.resultado) ? payload.resultado : [];
 
   const queue = [];
   const push = (text) => {
@@ -55,14 +53,13 @@ export async function translateTrackingPayload(payload, language = "es") {
     queue.push(raw);
   };
 
-  for (const ev of locales) {
-    push(ev?.action);
-    push(ev?.descripcion);
-  }
-  for (const ev of externos) {
-    push(ev?.eventType);
-    push(ev?.condition);
-    push(ev?.nextOffice);
+  for (const item of results) {
+    const events = Array.isArray(item?.eventos) ? item.eventos : [];
+    for (const ev of events) {
+      push(ev?.nombre_evento);
+      push(ev?.servicio);
+      push(ev?.condition);
+    }
   }
 
   const unique = Array.from(new Set(queue));
@@ -76,16 +73,14 @@ export async function translateTrackingPayload(payload, language = "es") {
 
   return {
     ...payload,
-    eventos_locales: locales.map((ev) => ({
-      ...ev,
-      action: tr(ev?.action),
-      descripcion: tr(ev?.descripcion),
-    })),
-    eventos_externos: externos.map((ev) => ({
-      ...ev,
-      eventType: tr(ev?.eventType),
-      condition: tr(ev?.condition),
-      nextOffice: tr(ev?.nextOffice),
+    resultado: results.map((item) => ({
+      ...item,
+      eventos: (Array.isArray(item?.eventos) ? item.eventos : []).map((ev) => ({
+        ...ev,
+        nombre_evento: tr(ev?.nombre_evento),
+        servicio: tr(ev?.servicio),
+        condition: tr(ev?.condition),
+      })),
     })),
   };
 }

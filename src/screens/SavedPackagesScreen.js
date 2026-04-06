@@ -19,7 +19,7 @@ import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } 
 import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
-import { formatPackageEventSummary, getLatestPackageEvent } from "../utils/packageEvents";
+import { formatPackageEventSummary, getLatestPackageEvent, getPackageEventOffice, getTrackingEvents, isPayloadDelivered } from "../utils/packageEvents";
 
 export default function SavedPackagesScreen({ navigation }) {
   const theme = useTheme();
@@ -64,22 +64,19 @@ export default function SavedPackagesScreen({ navigation }) {
           try {
             const response = await fetchTrackingByCode(p.code, { language });
 
-            const externos = response.data?.eventos_externos || [];
-            const locales = response.data?.eventos_locales || [];
+            const events = getTrackingEvents(response.data);
+            const last = getLatestPackageEvent(response.data);
+            const deliveredNow = isPayloadDelivered(response.data);
 
-            const hasLocales = Array.isArray(locales) && locales.length > 0;
-            const hasExternos = Array.isArray(externos) && externos.length > 0;
-            const last = getLatestPackageEvent(locales, externos, t, language);
-
-            if (hasLocales && hasExternos) {
+            if (deliveredNow) {
               delivered += 1;
             }
 
-            if (!hasLocales) {
+            if (!deliveredNow && events.length > 0) {
               newEventsData[p.code] = {
                 lastEvent: last,
                 fullData: response.data,
-                hasExternos,
+                hasExternos: response.data?.fuente === "api",
               };
 
               onlyWithExternalEvents.push(p);
@@ -87,7 +84,7 @@ export default function SavedPackagesScreen({ navigation }) {
           } catch (e) {
             newEventsData[p.code] = {
               lastEvent: null,
-              fullData: { codigo: p.code, eventos_externos: [] },
+              fullData: { filtro: { codigo: p.code }, resultado: [] },
               hasExternos: false,
               error: e?.message || "Error desconocido",
             };
@@ -172,7 +169,7 @@ export default function SavedPackagesScreen({ navigation }) {
   };
 
   const viewPackage = (code) => {
-    const data = eventsData[code]?.fullData || { codigo: code, eventos_externos: [] };
+    const data = eventsData[code]?.fullData || { filtro: { codigo: code }, resultado: [] };
     navigation.navigate("Result", { data });
   };
 
@@ -227,7 +224,7 @@ export default function SavedPackagesScreen({ navigation }) {
           <View style={{ marginTop: 12, gap: 8 }}>
             <View style={styles.rowWrap}>
               <Chip text={t("saved.pending", "Pending")} color={colors.primary} icon="globe-outline" />
-              {last?.office ? <Chip text={last.office} color={colors.secondary} icon="business-outline" /> : null}
+              {getPackageEventOffice(last) ? <Chip text={getPackageEventOffice(last)} color={colors.secondary} icon="business-outline" /> : null}
             </View>
 
             <Text style={styles.lastEvent}>{formatPackageEventSummary(last, t, language, "saved.noRecentUpdates")}</Text>

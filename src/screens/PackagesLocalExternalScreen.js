@@ -19,7 +19,7 @@ import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } 
 import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
-import { formatPackageEventSummary, getLatestPackageEvent } from "../utils/packageEvents";
+import { formatPackageEventSummary, getLatestPackageEvent, getTrackingEvents, isPayloadDelivered } from "../utils/packageEvents";
 
 export default function DeliveredPackagesScreen({ navigation }) {
   const theme = useTheme();
@@ -62,19 +62,16 @@ export default function DeliveredPackagesScreen({ navigation }) {
           try {
             const response = await fetchTrackingByCode(p.code, { language });
 
-            const externos = response.data?.eventos_externos || [];
-            const locales = response.data?.eventos_locales || [];
+            const events = getTrackingEvents(response.data);
+            const deliveredNow = isPayloadDelivered(response.data);
 
-            const hasExternos = Array.isArray(externos) && externos.length > 0;
-            const hasLocales = Array.isArray(locales) && locales.length > 0;
-
-            if (hasLocales && hasExternos) {
-              const last = getLatestPackageEvent(locales, externos, t, language);
+            if (deliveredNow && events.length > 0) {
+              const last = getLatestPackageEvent(response.data);
 
               newEventsData[p.code] = {
                 lastEvent: last,
                 fullData: response.data,
-                counts: { locales: locales.length, externos: externos.length },
+                counts: { locales: events.length, externos: 0 },
               };
 
               onlyWithBoth.push(p);
@@ -82,7 +79,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
           } catch (e) {
             newEventsData[p.code] = {
               lastEvent: null,
-              fullData: { codigo: p.code, eventos_externos: [], eventos_locales: [] },
+              fullData: { filtro: { codigo: p.code }, resultado: [] },
               counts: { locales: 0, externos: 0 },
               error: e?.message || "Error desconocido",
             };
@@ -165,7 +162,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
   };
 
   const viewPackage = (code) => {
-    const data = eventsData[code]?.fullData || { codigo: code, eventos_externos: [], eventos_locales: [] };
+    const data = eventsData[code]?.fullData || { filtro: { codigo: code }, resultado: [] };
     navigation.navigate("Result", { data });
   };
 

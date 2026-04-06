@@ -1,9 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { postApiWithRetry } from "../config/api";
-import { normalizeTrackingPayload } from "../utils/trackingParser";
+import { getApiWithRetry } from "../config/api";
 import { translateTrackingPayload } from "../utils/runtimeTranslate";
 
-const TRACKING_CACHE_PREFIX = "tracking_cache_v1_";
+const TRACKING_CACHE_PREFIX = "tracking_cache_v2_";
 const TRACKING_CACHE_TTL_MS = 1000 * 60 * 60 * 12;
 
 const getCacheKey = (codigo) => `${TRACKING_CACHE_PREFIX}${String(codigo || "").trim().toUpperCase()}`;
@@ -30,15 +29,15 @@ const writeCache = async (codigo, data) => {
 export const fetchTrackingByCode = async (codigo, options = {}) => {
   const { language = "es", ...requestOptions } = options || {};
   try {
-    const response = await postApiWithRetry(
-      "/api/busqueda-rr",
-      { codigo },
-      { timeout: 12000, retries: 1, ...requestOptions }
-    );
+    const response = await getApiWithRetry("/api/public/tracking/eventos", {
+      timeout: 12000,
+      retries: 1,
+      params: { codigo },
+      ...requestOptions,
+    });
 
-    const normalized = normalizeTrackingPayload(response.data);
     const rawWithCacheMeta = {
-      ...normalized,
+      ...response.data,
       meta_cache: {
         fromCache: false,
         stale: false,

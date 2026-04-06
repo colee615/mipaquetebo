@@ -279,11 +279,7 @@ export default function ScanScreen({ navigation }) {
       const response = await fetchTrackingByCode(value, { language });
       const data = response.data;
 
-      const hasPackages = Array.isArray(data?.packages) && data.packages.length > 0;
-      const hasLocales = Array.isArray(data?.eventos_locales) && data.eventos_locales.length > 0;
-      const hasExternos = Array.isArray(data?.eventos_externos) && data.eventos_externos.length > 0;
-
-      if (!hasPackages && !hasLocales && !hasExternos) {
+      if (!data?.existe_paquete) {
         return showSnack(t("scan.packageNotFound", "Package not found"), "danger");
       }
 

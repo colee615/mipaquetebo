@@ -83,6 +83,15 @@ export const postApi = async (path, payload, config = {}) => {
   return apiClient.post(path, payload, { ...config, headers });
 };
 
+export const getApi = async (path, config = {}) => {
+  if (!API_BASE_URL && typeof path === "string" && path.startsWith("/")) {
+    throw new Error("API_CONFIG_MISSING");
+  }
+
+  const headers = buildAuthHeaders(config.headers);
+  return apiClient.get(path, { ...config, headers });
+};
+
 export const postApiWithRetry = async (path, payload, options = {}) => {
   const { retries = 1, retryDelayMs = 500, ...requestConfig } = options;
   let lastError = null;
@@ -90,6 +99,23 @@ export const postApiWithRetry = async (path, payload, options = {}) => {
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     try {
       return await postApi(path, payload, requestConfig);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !shouldRetry(error)) break;
+      await sleep(retryDelayMs * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+};
+
+export const getApiWithRetry = async (path, options = {}) => {
+  const { retries = 1, retryDelayMs = 500, ...requestConfig } = options;
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await getApi(path, requestConfig);
     } catch (error) {
       lastError = error;
       if (attempt >= retries || !shouldRetry(error)) break;

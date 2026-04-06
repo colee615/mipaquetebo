@@ -13,99 +13,37 @@ async function getSavedPackages() {
   return Array.isArray(list) ? list : [];
 }
 
-function getLatestEventSignature(locales = [], externos = [], packages = []) {
-  const items = [];
-  const localList = Array.isArray(locales) ? locales : [];
-  const externalList = Array.isArray(externos) ? externos : [];
-  const packageList = Array.isArray(packages) ? packages : [];
-
-  for (const ev of localList) {
-    const date = ev?.updated_at || ev?.created_at || null;
-    if (date) items.push({ kind: "local", date, ev });
-  }
-
-  for (const ev of externalList) {
-    const date = ev?.eventDate || null;
-    if (date) items.push({ kind: "external", date, ev });
-  }
-
-  for (const ev of packageList) {
-    const date = ev?.updated_at || ev?.created_at || null;
-    if (date) items.push({ kind: "package", date, ev });
-  }
-
-  if (!items.length) return null;
-  items.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-  const last = items[0];
-  if (last.kind === "local") {
-    return `local|${last.date}|${last.ev?.id || ""}|${last.ev?.action || ""}|${last.ev?.descripcion || ""}`;
-  }
-  if (last.kind === "external") {
-    return `external|${last.date}|${last.ev?.mailitM_PID || ""}|${last.ev?.eventType || ""}|${last.ev?.office || ""}`;
-  }
-  return `package|${last.date}|${last.ev?.id || ""}|${last.ev?.ESTADO || ""}|${last.ev?.OBSERVACIONES || ""}`;
+function getTrackingEvents(payload) {
+  const first = Array.isArray(payload?.resultado) ? payload.resultado[0] : null;
+  return Array.isArray(first?.eventos) ? first.eventos : [];
 }
 
-function getLatestEventPayload(locales = [], externos = [], packages = []) {
-  const items = [];
-  const localList = Array.isArray(locales) ? locales : [];
-  const externalList = Array.isArray(externos) ? externos : [];
-  const packageList = Array.isArray(packages) ? packages : [];
+function getLatestEvent(events = []) {
+  const list = Array.isArray(events) ? [...events] : [];
+  if (!list.length) return null;
+  list.sort((a, b) => {
+    const left = typeof b?._sort_ts === "number" ? b._sort_ts * 1000 : new Date(b?.created_at || 0).getTime();
+    const right = typeof a?._sort_ts === "number" ? a._sort_ts * 1000 : new Date(a?.created_at || 0).getTime();
+    return left - right;
+  });
+  return list[0] || null;
+}
 
-  for (const ev of localList) {
-    const date = ev?.updated_at || ev?.created_at || null;
-    if (date) {
-      items.push({
-        source: "local",
-        eventDate: date,
-        eventTitle: ev?.action || "Evento local",
-        eventBody: ev?.descripcion || "",
-        office: "",
-        condition: "",
-        nextOffice: "",
-      });
-    }
-  }
-
-  for (const ev of externalList) {
-    const date = ev?.eventDate || null;
-    if (date) {
-      items.push({
-        source: "external",
-        eventDate: date,
-        eventTitle: ev?.eventType || "Evento externo",
-        eventBody: "",
-        office: ev?.office || "",
-        condition: ev?.condition || "",
-        nextOffice: ev?.nextOffice || "",
-      });
-    }
-  }
-
-  for (const ev of packageList) {
-    const date = ev?.updated_at || ev?.created_at || null;
-    if (date) {
-      items.push({
-        source: "package",
-        eventDate: date,
-        eventTitle: ev?.ESTADO || "Actualizacion de paquete",
-        eventBody: ev?.OBSERVACIONES || "",
-        office: "",
-        condition: "",
-        nextOffice: "",
-      });
-    }
-  }
-
-  if (!items.length) return null;
-  items.sort((a, b) => new Date(b.eventDate) - new Date(a.eventDate));
-  return items[0];
+function getLatestEventSignature(events = []) {
+  const latest = getLatestEvent(events);
+  if (!latest) return null;
+  return [
+    latest?.codigo || "",
+    latest?.created_at || "",
+    latest?.nombre_evento || "",
+    latest?.office || "",
+    latest?.next_office || "",
+  ].join("|");
 }
 
 function buildNotificationContent(pkg, latest, sig) {
   const packageName = (pkg?.name || "").trim() || pkg?.code || "Paquete";
-  const eventTitle = (latest?.eventTitle || "Actualizacion registrada").trim();
+  const eventTitle = String(latest?.nombre_evento || "Actualizacion registrada").trim();
 
   return {
     title: "TrackingBo App | Actualizacion de envio",
@@ -114,13 +52,10 @@ function buildNotificationContent(pkg, latest, sig) {
     data: {
       codigo: pkg.code,
       packageName,
-      eventSource: latest?.source || "",
-      eventDate: latest?.eventDate || "",
-      eventTitle: latest?.eventTitle || "",
-      eventBody: latest?.eventBody || "",
+      eventDate: latest?.created_at || "",
+      eventTitle,
       office: latest?.office || "",
-      condition: latest?.condition || "",
-      nextOffice: latest?.nextOffice || "",
+      nextOffice: latest?.next_office || "",
       highlightSig: sig || "",
     },
   };
@@ -132,14 +67,12 @@ async function checkCode(code) {
   if (!valid.ok) return null;
 
   const res = await fetchTrackingByCode(valid.value, { timeout: 15000, retries: 1 });
+  if (!res?.data?.existe_paquete) return null;
 
-  const externos = res.data?.eventos_externos || [];
-  const locales = res.data?.eventos_locales || [];
-  const packages = res.data?.packages || [];
-
-  const sig = getLatestEventSignature(locales, externos, packages);
-  const latest = getLatestEventPayload(locales, externos, packages);
-  if (!sig) return null;
+  const events = getTrackingEvents(res.data);
+  const sig = getLatestEventSignature(events);
+  const latest = getLatestEvent(events);
+  if (!sig || !latest) return null;
 
   const key = `last_sig_${code}`;
   const prev = await AsyncStorage.getItem(key);
@@ -168,7 +101,6 @@ TaskManager.defineTask(TASK_NAME, async () => {
       const result = await checkCode(p.code);
       if (result?.changed) {
         anyNew = true;
-
         await Notifications.scheduleNotificationAsync({
           content: buildNotificationContent(p, result.latest, result.sig),
           trigger: null,
@@ -176,10 +108,8 @@ TaskManager.defineTask(TASK_NAME, async () => {
       }
     }
 
-    return anyNew
-      ? BackgroundFetch.BackgroundFetchResult.NewData
-      : BackgroundFetch.BackgroundFetchResult.NoData;
-  } catch (e) {
+    return anyNew ? BackgroundFetch.BackgroundFetchResult.NewData : BackgroundFetch.BackgroundFetchResult.NoData;
+  } catch {
     return BackgroundFetch.BackgroundFetchResult.Failed;
   }
 });
@@ -195,7 +125,6 @@ export async function runTrackingCheckOnce() {
       const result = await checkCode(p.code);
       if (result?.changed) {
         anyNew = true;
-
         await Notifications.scheduleNotificationAsync({
           content: buildNotificationContent(p, result.latest, result.sig),
           trigger: null,
@@ -204,7 +133,7 @@ export async function runTrackingCheckOnce() {
     }
 
     return { ok: true, anyNew };
-  } catch (e) {
+  } catch {
     return { ok: false, reason: "ERROR" };
   }
 }
@@ -229,5 +158,3 @@ export async function registerBackgroundTask() {
 
   return true;
 }
-
-

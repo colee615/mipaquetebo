@@ -27,7 +27,6 @@ import { ThemeProvider, useTheme } from "./src/theme/ui";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { fetchTrackingByCode } from "./src/services/trackingApi";
 import { normalizeTrackingCode, validateTrackingCode } from "./src/utils/tracking";
-import { runTrackingParserSelfTest } from "./src/utils/trackingParser";
 import { LanguageProvider, useI18n } from "./src/i18n/ui";
 
 export default function App() {
@@ -89,11 +88,6 @@ function AppRoot() {
   };
 
   useEffect(() => {
-    if (__DEV__) {
-      const ok = runTrackingParserSelfTest();
-      if (!ok) console.warn("trackingParser self-test failed");
-    }
-
     (async () => {
       if (Constants.appOwnership !== "expo") {
         const isLegacyAndroid = Platform.OS === "android" && Number(Platform.Version) < 33;
