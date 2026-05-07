@@ -15,6 +15,7 @@ import {
   TouchableOpacity,
   Linking,
   Platform,
+  Alert,
 } from "react-native";
 import StackNavigator from "./src/navigation/StackNavigator";
 import * as Notifications from "expo-notifications";
@@ -26,6 +27,7 @@ import { registerBackgroundTask } from "./background";
 import { ThemeProvider, useTheme } from "./src/theme/ui";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { fetchTrackingByCode } from "./src/services/trackingApi";
+import { checkAppUpdate } from "./src/services/updateCheck";
 import { normalizeTrackingCode, validateTrackingCode } from "./src/utils/tracking";
 import { LanguageProvider, useI18n } from "./src/i18n/ui";
 
@@ -47,6 +49,7 @@ function AppRoot() {
   const { t } = useI18n();
   const [openingFromNotification, setOpeningFromNotification] = useState(false);
   const [showLegacyNotifPrompt, setShowLegacyNotifPrompt] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState(null);
   const baseTheme = theme.isDark ? DarkTheme : DefaultTheme;
   const navTheme = {
     ...baseTheme,
@@ -86,6 +89,15 @@ function AppRoot() {
     }
     setOpeningFromNotification(false);
   };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const update = await checkAppUpdate();
+        if (update?.shouldShow) setUpdateInfo(update);
+      } catch {}
+    })();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -167,6 +179,52 @@ function AppRoot() {
           </View>
         </View>
       </Modal>
+      <Modal
+        visible={!!updateInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (updateInfo?.isForce) return;
+          setUpdateInfo(null);
+        }}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
+            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>
+              {updateInfo?.title || "Nueva version disponible"}
+            </Text>
+            <Text style={[styles.modalText, { color: theme.colors.muted }]}>
+              {updateInfo?.message || "Hay una nueva version disponible."}
+            </Text>
+            <Text style={[styles.modalText, { color: theme.colors.muted, marginTop: 0 }]}>
+              Version actual: {updateInfo?.currentVersion} | Ultima: {updateInfo?.latestVersion}
+            </Text>
+            <View style={styles.modalActions}>
+              {!updateInfo?.isForce ? (
+                <TouchableOpacity
+                  style={[styles.modalBtn, { borderColor: theme.colors.border }]}
+                  onPress={() => setUpdateInfo(null)}
+                >
+                  <Text style={[styles.modalBtnText, { color: theme.colors.text }]}>Despues</Text>
+                </TouchableOpacity>
+              ) : null}
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnPrimary, { backgroundColor: theme.colors.primary }]}
+                onPress={async () => {
+                  const ok = await Linking.canOpenURL(updateInfo?.storeUrl || "");
+                  if (!ok) {
+                    Alert.alert("No se pudo abrir la tienda");
+                    return;
+                  }
+                  Linking.openURL(updateInfo.storeUrl);
+                }}
+              >
+                <Text style={styles.modalBtnPrimaryText}>Actualizar</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
     </>
   );
@@ -237,3 +295,4 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
 });
+

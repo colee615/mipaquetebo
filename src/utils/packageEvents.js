@@ -5,9 +5,11 @@ const normalizeText = (value) => readText(value).toLowerCase();
 const includesAny = (text, values) => values.some((value) => text.includes(value));
 const READY_FOR_PICKUP_TERMS = [
   "listo para entregar",
+  "listo para entrega",
   "oficina de entrega",
   "available for pickup",
   "ready for pickup",
+  "ready to deliver",
   "delivery office",
   "pickup office",
 ];
@@ -39,8 +41,20 @@ const DELIVERED_CONFIRMATIONS = [
 ];
 const CLASSIFICATION_TERMS = ["clasific", "recibid", "registr", "classif", "receiv", "regist"];
 const DISPATCH_TERMS = ["despach", "dispatch"];
-const FORWARDING_TERMS = ["exped", "transit", "saca", "forward"];
-const COUNTER_TERMS = ["ventanilla", "oficina", "listo", "counter", "office", "pickup", "available"];
+const FORWARDING_TERMS = ["exped", "transit", "saca", "forward", "extranj"];
+// Keep "counter/ventanilla" strict so transit events that mention "oficina"
+// don't jump to Ventanilla before time (bolipost behavior).
+const COUNTER_TERMS = [
+  "ventanilla",
+  "listo para entregar",
+  "listo para entrega",
+  "oficina de entrega",
+  "counter",
+  "pickup",
+  "available for pickup",
+  "ready to deliver",
+  "delivery office",
+];
 const CARRIER_TERMS = ["cartero", "distrib", "domicilio", "intento", "carrier", "courier", "delivery attempt"];
 const INCIDENT_TERMS = ["fall", "incid", "devuelt", "failed", "incident", "return"];
 

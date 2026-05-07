@@ -243,7 +243,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
       <Ionicons name="checkmark-circle-outline" size={28} color={colors.muted} />
       <Text style={[typography.h2, { textAlign: "center", marginTop: 8 }]}>{t("common.noResults", "Sin resultados")}</Text>
       <Text style={[typography.p, { textAlign: "center", marginTop: 6 }]}>
-        {t("delivered.noPackages", "No hay paquetes entregados (o tu bÃºsqueda no coincide).")}
+        {t("delivered.noPackages", "No hay paquetes entregados (o tu búsqueda no coincide).")}
       </Text>
     </Card>
   );
@@ -252,7 +252,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
     <Screen>
       <View style={styles.container}>
         <Card style={styles.searchCard}>
-          <AppInput icon="search" placeholder={t("saved.searchPlaceholder", "Buscar por nombre o cÃ³digo...")} value={query} onChangeText={setQuery} />
+          <AppInput icon="search" placeholder={t("saved.searchPlaceholder", "Buscar por nombre o código...")} value={query} onChangeText={setQuery} />
           <View style={styles.rowBetween}>
             <Chip text={`${filtered.length} ${t("saved.packagesCount", "paquetes")}`} color={colors.secondary} icon="bookmark-outline" />
             <TouchableOpacity onPress={loadPackages} style={styles.refreshPill} activeOpacity={0.9}>
@@ -295,7 +295,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
             <Card style={styles.modalCard}>
               <Text style={typography.h2}>{t("common.editName", "Editar nombre")}</Text>
               <Text style={[typography.p, { marginTop: 6, marginBottom: 12 }]}>
-                {t("saved.shortNameHelp", "Usa un nombre corto y claro (ej: \"Paquete- AudÃ­fonos\").")}
+                {t("saved.shortNameHelp", "Usa un nombre corto y claro (ej: \"Paquete- Audífonos\").")}
               </Text>
 
               <AppInput icon="create-outline" placeholder={t("delivered.newNamePlaceholder", "New name")} value={editPackageName} onChangeText={setEditPackageName} />

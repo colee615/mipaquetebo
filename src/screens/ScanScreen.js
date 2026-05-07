@@ -279,7 +279,8 @@ export default function ScanScreen({ navigation }) {
       const response = await fetchTrackingByCode(value, { language });
       const data = response.data;
 
-      if (!data?.existe_paquete) {
+      // Some API responses omit `existe_paquete`; treat it as not-found only when explicitly false.
+      if (data?.existe_paquete === false) {
         return showSnack(t("scan.packageNotFound", "Package not found"), "danger");
       }
 
@@ -468,8 +469,8 @@ export default function ScanScreen({ navigation }) {
         >
           <View ref={heroRef} collapsable={false} onLayout={captureGuideOffset("hero")} style={styles.hero}>
             <Text style={styles.heroKicker}>TRACKINGBO APP</Text>
-            <Text style={styles.title}>{t("scan.title", "Rastreo de envÃ­os")}</Text>
-            <Text style={styles.subtitle}>{t("scan.subtitle", "Consulta con el cÃ³digo o escanea con la cÃ¡mara.")}</Text>
+            <Text style={styles.title}>{t("scan.title", "Rastreo de envíos")}</Text>
+            <Text style={styles.subtitle}>{t("scan.subtitle", "Consulta con el código o escanea con la cámara.")}</Text>
             <View style={styles.heroRow}>
               <Chip text={t("scan.heroPostal", "Bolivia Post")} color={colors.primary} icon="business-outline" />
               <Chip text={t("scan.heroSecure", "Secure delivery")} color={colors.secondary} icon="shield-checkmark-outline" />
@@ -480,9 +481,9 @@ export default function ScanScreen({ navigation }) {
             <Card style={styles.scanCard}>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>{t("scan.scan", "Escanear")}</Text>
-                <Text style={styles.sectionDesc}>{t("scan.scanDesc", "La forma mÃ¡s rÃ¡pida y segura")}</Text>
+                <Text style={styles.sectionDesc}>{t("scan.scanDesc", "La forma más rápida y segura")}</Text>
               </View>
-              <PrimaryButton title={t("scan.scanWithCamera", "Escanear con cÃ¡mara")} icon="scan" onPress={startScan} />
+              <PrimaryButton title={t("scan.scanWithCamera", "Escanear con cámara")} icon="scan" onPress={startScan} />
             </Card>
           </View>
 
@@ -495,13 +496,13 @@ export default function ScanScreen({ navigation }) {
           <View ref={inputCardRef} collapsable={false} onLayout={captureGuideOffset("input")}>
             <Card style={styles.inputCard}>
               <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>{t("scan.enterCode", "Ingresar cÃ³digo")}</Text>
-                <Text style={styles.sectionDesc}>{t("scan.enterCodeDesc", "Ingresa tu cÃ³digo de rastreo")}</Text>
+                <Text style={styles.sectionTitle}>{t("scan.enterCode", "Ingresar código")}</Text>
+                <Text style={styles.sectionDesc}>{t("scan.enterCodeDesc", "Ingresa tu código de rastreo")}</Text>
               </View>
 
               <AppInput
                 icon="barcode-outline"
-                placeholder={t("scan.enterCodePlaceholder", "Ingresa tu cÃ³digo")}
+                placeholder={t("scan.enterCodePlaceholder", "Ingresa tu código")}
                 value={codigo}
                 onChangeText={setCodigo}
                 autoCapitalize="characters"

@@ -9,6 +9,12 @@ import { useI18n } from "../i18n/ui";
 import { Screen, Card, OutlineButton } from "../components/ui";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { getTrackingEvents, getTrackingPresentation } from "../utils/packageEvents";
+import countries from "i18n-iso-countries";
+import esLocale from "i18n-iso-countries/langs/es.json";
+import enLocale from "i18n-iso-countries/langs/en.json";
+
+countries.registerLocale(esLocale);
+countries.registerLocale(enLocale);
 
 const readText = (value) => String(value || "").trim();
 const lower = (value) => readText(value).toLowerCase();
@@ -106,10 +112,39 @@ const parseIsoFromCode = (code) => {
 const parseIsoFromOffice = (value) => {
   const text = readText(value).toUpperCase();
   if (!text) return null;
-  const officeCodeMatch = text.match(/\b([A-Z]{2})[A-Z0-9]{4}\b/);
+  const countryName = countryNameFromOffice(text);
+  if (countryName) {
+    return countryIsoFromName(countryName);
+  }
+
+  // Office code must include digits to avoid false positives like "ORIGEN".
+  const officeCodeMatch = text.match(/\b([A-Z]{2})(?=[A-Z0-9]{3,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b/);
   if (officeCodeMatch) return officeCodeMatch[1];
-  const standaloneIsoMatch = text.match(/\b([A-Z]{2})\b/);
-  return standaloneIsoMatch ? standaloneIsoMatch[1] : null;
+  return null;
+};
+
+const normalizeCountryName = (value) =>
+  readText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+
+const countryIsoFromName = (value) => {
+  const n = normalizeCountryName(value);
+  if (!n) return null;
+  const byEs = countries.getAlpha2Code(n, "es");
+  if (byEs) return byEs;
+  const byEn = countries.getAlpha2Code(n, "en");
+  if (byEn) return byEn;
+  return null;
+};
+
+const countryNameFromOffice = (value) => {
+  const text = normalizeCountryName(value);
+  const m = text.match(/(?:PAIS\s+ORIGEN|COUNTRY\s*ORIGIN)\s*:\s*(.+)$/);
+  if (!m) return "";
+  return readText(m[1]);
 };
 
 const detectBoliviaDepartment = (value) => {
@@ -138,6 +173,12 @@ const getFlagUrl = (iso2) => {
 const getCountryCode = (iso2) => {
   const normalized = readText(iso2).toUpperCase();
   return /^[A-Z]{2}$/.test(normalized) ? normalized : "";
+};
+
+const countryNameFromIso = (iso2) => {
+  const normalized = getCountryCode(iso2);
+  if (!normalized) return "";
+  return countries.getName(normalized, "es") || countries.getName(normalized, "en") || normalized;
 };
 
 export default function ResultScreen({ route }) {
@@ -194,7 +235,6 @@ export default function ResultScreen({ route }) {
         nextOffice: readText(event?.next_office),
         originCity: readText(event?.ciudad_origen),
         destinationCity: readText(event?.ciudad_destino),
-        sourceKind: event?.tabla_origen === "api_sqlserver" ? "external" : "local",
       }))
       .filter((event) => !!event.date)
       .sort((a, b) => b.date - a.date);
@@ -223,25 +263,34 @@ export default function ResultScreen({ route }) {
   const serviceLabel = readText(latestEvent?.service).toUpperCase() || "EMS";
   const originCity = readText(events.find((event) => event.originCity)?.originCity);
   const destinationCity = readText(events.find((event) => event.destinationCity)?.destinationCity);
-  const destinationIso = events.reduce(
-    (found, event) => found || parseIsoFromOffice(event.office) || parseIsoFromOffice(event.nextOffice),
-    null
-  );
+  const destinationIso = events.reduce((found, event) => {
+    if (found) return found;
+    return parseIsoFromOffice(event.office) || parseIsoFromOffice(event.nextOffice) || null;
+  }, null);
   const trackingIso = parseIsoFromCode(codigo);
-  const isNationalDestination = !!destinationCity || destinationIso === "BO" || trackingIso === "BO";
-  const originIso = originCity ? "BO" : trackingIso;
-  const originLabel = originCity
-    ? formatLocationLabel(originCity)
-    : originIso
-      ? getCountryCode(originIso)
-      : t("scan.heroPostal", "Correos de Bolivia");
+  const originEvent = events.find((event) => countryNameFromOffice(event.office));
+  const originCountryName = originEvent ? countryNameFromOffice(originEvent.office) : "";
+  const originCountryIso = originEvent
+    ? parseIsoFromCode(originEvent.code || codigo) || countryIsoFromName(originCountryName)
+    : null;
+
+  const originIso = originCity ? "BO" : originCountryIso || trackingIso;
+  const originLabel = originCountryName
+    ? countryNameFromIso(originCountryIso || countryIsoFromName(originCountryName))
+    : originCity
+      ? formatLocationLabel(originCity)
+      : originIso
+        ? countryNameFromIso(originIso)
+        : t("scan.heroPostal", "Correos de Bolivia");
+
+  const isNationalDestination = !!destinationCity || destinationIso === "BO" || trackingIso === "BO" || serviceLabel === "CONTRATO";
   const destinationLabel = destinationCity
     ? formatLocationLabel(destinationCity)
     : isNationalDestination
-      ? "BO"
+      ? "Nacional"
       : destinationIso
-        ? getCountryCode(destinationIso)
-        : "-";
+        ? countryNameFromIso(destinationIso)
+        : "Internacional";
 
   const pickupNotice = useMemo(() => {
     if (presentation.delivered) {
@@ -421,7 +470,9 @@ export default function ResultScreen({ route }) {
 
                 <View style={styles.historyFeed}>
                   {group.events.map((event, index) => {
-                    const isLatest = index === 0 && group.dayKey === grouped[0]?.dayKey;
+                    const isTopEvent = index === 0 && group.dayKey === grouped[0]?.dayKey;
+                    const shouldHighlightLatest = presentation.currentStep >= 3; // Ventanilla or later, aligned with bolipost behavior.
+                    const isLatest = isTopEvent && shouldHighlightLatest;
                     return (
                       <View key={`${group.dayKey}-${index}`} style={[styles.historyEvent, isLatest ? styles.historyEventLatest : null, isHighlightedEvent(event) ? styles.historyEventNew : null]}>
                         <View style={styles.historySide}>
@@ -430,14 +481,22 @@ export default function ResultScreen({ route }) {
                         <View style={styles.historyBody}>
                           <Text style={styles.historyEventTitle}>{event.title}</Text>
                           <View style={styles.historyMeta}>
-                            <InfoRow label={t("result.office", "Office")} value={event.office} icon="business-outline" styles={styles} theme={theme} />
-                            <InfoRow label={t("result.nextOffice", "Next office")} value={event.nextOffice} icon="navigate-outline" styles={styles} theme={theme} />
-                            {event.sourceKind === "external" ? (
-                              <>
-                                <InfoRow label={t("result.origin", "Origen")} value={event.originCity} icon="navigate-circle-outline" styles={styles} theme={theme} />
-                                <InfoRow label={t("result.destination", "Destino")} value={event.destinationCity} icon="flag-outline" styles={styles} theme={theme} />
-                              </>
-                            ) : null}
+                            <InfoRow
+                              label={t("result.office", "Office")}
+                              value={event.office}
+                              icon="business-outline"
+                              styles={styles}
+                              theme={theme}
+                              iso2={parseIsoFromOffice(event.office) || countryIsoFromName(countryNameFromOffice(event.office))}
+                            />
+                            <InfoRow
+                              label={t("result.nextOffice", "Next office")}
+                              value={event.nextOffice}
+                              icon="navigate-outline"
+                              styles={styles}
+                              theme={theme}
+                              iso2={parseIsoFromOffice(event.nextOffice) || countryIsoFromName(countryNameFromOffice(event.nextOffice))}
+                            />
                           </View>
                         </View>
                       </View>
@@ -473,15 +532,19 @@ function SummaryTile({ label, value, iso2, styles }) {
   );
 }
 
-function InfoRow({ label, value, icon, theme, styles }) {
+function InfoRow({ label, value, icon, theme, styles, iso2 }) {
   if (!readText(value)) return null;
+  const flagUrl = getFlagUrl(iso2);
   return (
     <View style={styles.infoRow}>
-      <Ionicons name={icon} size={16} color={theme.colors.muted} />
-      <Text style={styles.infoLabel}>{label}</Text>
+      <View style={styles.infoBadge}>
+        <Ionicons name={icon} size={13} color={theme.colors.muted} />
+        <Text style={styles.infoLabel}>{label}</Text>
+      </View>
       <Text style={styles.infoValue} numberOfLines={3}>
         {String(value)}
       </Text>
+      {flagUrl ? <Image source={{ uri: flagUrl }} style={styles.infoFlag} /> : null}
     </View>
   );
 }
@@ -506,8 +569,6 @@ const createStyles = (t) =>
     summaryValueRow: { marginTop: 7, flexDirection: "row", alignItems: "center", gap: 8 },
     summaryValue: { flex: 1, color: t.colors.text, fontWeight: "900", fontSize: 13, lineHeight: 18 },
     summaryFlag: { width: 22, height: 16, borderRadius: 3, borderWidth: 1, borderColor: t.colors.border },
-    metaRow: { marginTop: 10, flexDirection: "row", justifyContent: "space-between", gap: 10 },
-    metaText: { color: t.colors.muted, fontWeight: "700", fontSize: 11 },
     cacheText: { marginTop: 7, color: t.colors.muted, fontWeight: "700", fontSize: 11 },
     refreshWrap: { marginTop: 10 },
     refreshText: { marginBottom: 8, color: t.colors.text, fontWeight: "700", fontSize: 12 },
@@ -538,16 +599,18 @@ const createStyles = (t) =>
     historyGroupCount: { color: t.colors.muted, fontWeight: "800", fontSize: 10 },
     historyFeed: { marginTop: 12, gap: 10 },
     historyEvent: { flexDirection: "row", gap: 10, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF" },
-    historyEventLatest: { borderColor: `${t.colors.primaryDark}55`, backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.08)" : "#FFF9E8" },
+    historyEventLatest: { borderColor: "#E3C571", backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.10)" : "#F8F3E2" },
     historyEventNew: { borderColor: `${t.colors.success}66`, backgroundColor: t.isDark ? "rgba(34, 197, 94, 0.10)" : "rgba(34, 197, 94, 0.08)" },
     historySide: { width: 42, alignItems: "center", justifyContent: "flex-start", paddingTop: 2 },
     historyTime: { color: t.colors.muted, fontWeight: "900", fontSize: 11 },
     historyBody: { flex: 1 },
     historyEventTitle: { color: t.colors.text, fontWeight: "900", fontSize: 14, lineHeight: 19 },
     historyMeta: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: t.colors.border },
-    infoRow: { flexDirection: "row", alignItems: "flex-start", gap: 6, marginBottom: 6 },
+    infoRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6, borderWidth: 1, borderColor: t.colors.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
+    infoBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 6 },
     infoLabel: { color: t.colors.muted, fontWeight: "900", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.35 },
     infoValue: { flex: 1, color: t.colors.text, fontWeight: "700", lineHeight: 17, fontSize: 12, opacity: 0.95 },
+    infoFlag: { width: 18, height: 12, borderRadius: 2, borderWidth: 1, borderColor: t.colors.border, marginTop: 2 },
     loaderOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: t.isDark ? "rgba(2, 6, 23, 0.55)" : "rgba(255, 255, 255, 0.78)", zIndex: 99 },
     loaderText: { marginTop: 10, color: t.colors.muted, fontWeight: "800" },
   });
