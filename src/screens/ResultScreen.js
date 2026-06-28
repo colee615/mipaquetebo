@@ -8,7 +8,7 @@ import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 import { Screen, Card, OutlineButton } from "../components/ui";
 import { fetchTrackingByCode } from "../services/trackingApi";
-import { getTrackingEvents, getTrackingPresentation } from "../utils/packageEvents";
+import { getTrackingEvents, getTrackingPresentation, isDeliveredEvent } from "../utils/packageEvents";
 import countries from "i18n-iso-countries";
 import esLocale from "i18n-iso-countries/langs/es.json";
 import enLocale from "i18n-iso-countries/langs/en.json";
@@ -17,11 +17,12 @@ countries.registerLocale(esLocale);
 countries.registerLocale(enLocale);
 
 const readText = (value) => String(value || "").trim();
-const lower = (value) => readText(value).toLowerCase();
+const normalizeText = (value) => readText(value).toLowerCase();
 const includesAny = (text, values) => values.some((value) => text.includes(value));
 const S10_REGEX = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
 const READY_FOR_PICKUP_TERMS = [
   "listo para entregar",
+  "listo para entrega",
   "oficina de entrega",
   "available for pickup",
   "ready for pickup",
@@ -54,18 +55,41 @@ const REGIONAL_CONTACTS = {
     regional: "Regional: Tarija",
     direccion: "Calle Mariscal Sucre esquina Virginio Lema N 397",
   },
-  Chuquisaca: {
+  Sucre: {
     regional: "Regional: Sucre",
     direccion: "Calle Junin Esquina Ayacucho N 699",
   },
-  Beni: {
+  Trinidad: {
     regional: "Regional: Beni",
     direccion: "Calle Cipriano Barace N 10 Entre Manuel Limpias y Calle Sucre",
   },
-  Pando: {
+  Cobija: {
     regional: "Regional: Pando",
     direccion: "Av. Bruno Recua N 59",
   },
+};
+
+const COUNTRY_NAMES = {
+  BO: "Bolivia",
+  PE: "Peru",
+  ES: "Espana",
+  AR: "Argentina",
+  BR: "Brasil",
+  CL: "Chile",
+  US: "Estados Unidos",
+  CO: "Colombia",
+  PY: "Paraguay",
+  UY: "Uruguay",
+  EC: "Ecuador",
+  VE: "Venezuela",
+  MX: "Mexico",
+  FR: "Francia",
+  DE: "Alemania",
+  IT: "Italia",
+  GB: "Reino Unido",
+  CN: "China",
+  JP: "Japon",
+  KR: "Corea del Sur",
 };
 
 const parseRawDateParts = (value) => {
@@ -96,11 +120,59 @@ const capitalizeWords = (value) =>
     .toLowerCase()
     .replace(/\b\w/g, (char) => char.toUpperCase());
 
-const formatLocationLabel = (value) => {
-  const text = readText(value);
-  if (!text) return "";
-  if (/^[A-Z]{2}$/.test(text.toUpperCase())) return text.toUpperCase();
-  return capitalizeWords(text);
+const normalizeCountryName = (value) =>
+  readText(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase()
+    .replace(/\s+/g, " ");
+
+const getCountryCode = (iso2) => {
+  const normalized = readText(iso2).toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : "";
+};
+
+const countryIsoFromName = (value) => {
+  const normalized = normalizeCountryName(value);
+  if (!normalized) return null;
+  return countries.getAlpha2Code(normalized, "es") || countries.getAlpha2Code(normalized, "en") || null;
+};
+
+const countryNameFromIso = (iso2) => {
+  const code = getCountryCode(iso2);
+  if (!code) return "";
+  return COUNTRY_NAMES[code] || countries.getName(code, "es") || countries.getName(code, "en") || code;
+};
+
+const countryNameFromOffice = (value) => {
+  const text = normalizeCountryName(value);
+  const match = text.match(/(?:PAIS\s+ORIGEN|COUNTRY\s*ORIGIN)\s*:\s*(.+)$/);
+  return match ? readText(match[1]) : "";
+};
+
+const isGenericOriginOffice = (value) => {
+  const text = normalizeText(value);
+  return text.startsWith("pais origen:") || text.startsWith("country origin:");
+};
+
+const detectBoliviaDepartment = (value) => {
+  const text = readText(value).toUpperCase();
+  if (!text) return null;
+  const map = {
+    "LA PAZ": "La Paz",
+    ORURO: "Oruro",
+    POTOSI: "Potosi",
+    COCHABAMBA: "Cochabamba",
+    "SANTA CRUZ": "Santa Cruz",
+    CHUQUISACA: "Sucre",
+    SUCRE: "Sucre",
+    TARIJA: "Tarija",
+    BENI: "Trinidad",
+    TRINIDAD: "Trinidad",
+    PANDO: "Cobija",
+    COBIJA: "Cobija",
+  };
+  return Object.entries(map).find(([key]) => text.includes(key))?.[1] || null;
 };
 
 const parseIsoFromCode = (code) => {
@@ -113,56 +185,21 @@ const parseIsoFromOffice = (value) => {
   const text = readText(value).toUpperCase();
   if (!text) return null;
   const countryName = countryNameFromOffice(text);
-  if (countryName) {
-    return countryIsoFromName(countryName);
-  }
-
-  // Office code must include digits to avoid false positives like "ORIGEN".
-  const officeCodeMatch = text.match(/\b([A-Z]{2})(?=[A-Z0-9]{3,}\b)(?=[A-Z0-9]*\d)[A-Z0-9]+\b/);
-  if (officeCodeMatch) return officeCodeMatch[1];
+  if (countryName) return countryIsoFromName(countryName);
+  const officeCodeMatch = text.match(/^([A-Z]{2}[A-Z]{3}[A-Z0-9]*)\b/);
+  if (officeCodeMatch) return officeCodeMatch[1].slice(0, 2);
   return null;
 };
 
-const normalizeCountryName = (value) =>
-  readText(value)
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase()
-    .replace(/\s+/g, " ");
-
-const countryIsoFromName = (value) => {
-  const n = normalizeCountryName(value);
-  if (!n) return null;
-  const byEs = countries.getAlpha2Code(n, "es");
-  if (byEs) return byEs;
-  const byEn = countries.getAlpha2Code(n, "en");
-  if (byEn) return byEn;
-  return null;
-};
-
-const countryNameFromOffice = (value) => {
-  const text = normalizeCountryName(value);
-  const m = text.match(/(?:PAIS\s+ORIGEN|COUNTRY\s*ORIGIN)\s*:\s*(.+)$/);
-  if (!m) return "";
-  return readText(m[1]);
-};
-
-const detectBoliviaDepartment = (value) => {
-  const text = readText(value).toUpperCase();
-  if (!text) return null;
-  const map = {
-    "LA PAZ": "La Paz",
-    ORURO: "Oruro",
-    POTOSI: "Potosi",
-    COCHABAMBA: "Cochabamba",
-    "SANTA CRUZ": "Santa Cruz",
-    CHUQUISACA: "Chuquisaca",
-    SUCRE: "Chuquisaca",
-    TARIJA: "Tarija",
-    BENI: "Beni",
-    PANDO: "Pando",
-  };
-  return Object.entries(map).find(([key]) => text.includes(key))?.[1] || null;
+const extractRoute = (value) => {
+  const raw = readText(value).toUpperCase();
+  if (!raw || !/(RECEPTACULO|ENVASE|DESPACHO|RUTA)/.test(raw)) return null;
+  const match = raw.match(/([A-Z]{2}[A-Z]{3}[A-Z0-9][A-Z]{2}[A-Z]{3}[A-Z0-9][A-Z0-9]*)/);
+  if (!match || match[1].length < 12) return null;
+  const originIso = match[1].slice(0, 2);
+  const destinationIso = match[1].slice(6, 8);
+  if (!countryNameFromIso(originIso) || !countryNameFromIso(destinationIso)) return null;
+  return { originIso, destinationIso };
 };
 
 const getFlagUrl = (iso2) => {
@@ -170,22 +207,137 @@ const getFlagUrl = (iso2) => {
   return /^[a-z]{2}$/.test(normalized) ? `https://flagcdn.com/32x24/${normalized}.png` : "";
 };
 
-const getCountryCode = (iso2) => {
-  const normalized = readText(iso2).toUpperCase();
-  return /^[A-Z]{2}$/.test(normalized) ? normalized : "";
-};
+const resolveSummary = (events, codigo, serviceLabel, t) => {
+  const latestEvent = events[0] || null;
+  const trackingIso = parseIsoFromCode(codigo);
+  const isS10Code = S10_REGEX.test(readText(codigo).toUpperCase());
+  const isBolivianCode = isS10Code && trackingIso === "BO";
 
-const countryNameFromIso = (iso2) => {
-  const normalized = getCountryCode(iso2);
-  if (!normalized) return "";
-  return countries.getName(normalized, "es") || countries.getName(normalized, "en") || normalized;
+  const originEvent = events.find((event) => countryNameFromOffice(event.office));
+  const originCountryName = originEvent ? countryNameFromOffice(originEvent.office) : "";
+  const originExternalIso = originEvent
+    ? parseIsoFromCode(originEvent.codigo || codigo) || countryIsoFromName(originCountryName)
+    : null;
+  const originCity = readText(events.find((event) => event.originCity)?.originCity);
+  const originIsoFromCity = originCity ? countryIsoFromName(originCity) : null;
+  const originCityFromOffice = [...events]
+    .reverse()
+    .map((event) => detectBoliviaDepartment(event.office) || detectBoliviaDepartment(event.nextOffice))
+    .find(Boolean);
+  const routeOut = [...events]
+    .reverse()
+    .map((event) => extractRoute(event.description) || extractRoute(event.office) || extractRoute(event.nextOffice))
+    .find((route) => route?.originIso === "BO" && route?.destinationIso && route.destinationIso !== "BO");
+  const preferExternalOrigin = originCountryName !== "" && originExternalIso !== "BO" && !isBolivianCode;
+
+  let originLabel = t("scan.heroPostal", "Correos de Bolivia");
+  let originIso = null;
+
+  if (isBolivianCode && routeOut) {
+    originLabel = countryNameFromIso("BO") || "Bolivia";
+    originIso = "BO";
+  } else if (preferExternalOrigin) {
+    originLabel = originCountryName;
+    originIso = originExternalIso;
+  } else if (originIsoFromCity && originIsoFromCity !== "BO") {
+    originLabel = countryNameFromIso(originIsoFromCity) || originCity;
+    originIso = originIsoFromCity;
+  } else if (originCity !== "") {
+    originLabel = capitalizeWords(originCity);
+    originIso = "BO";
+  } else if (serviceLabel === "CONTRATO" && originCityFromOffice) {
+    originLabel = originCityFromOffice;
+    originIso = "BO";
+  } else if (originCityFromOffice) {
+    originLabel = originCityFromOffice;
+    originIso = "BO";
+  } else if (originEvent) {
+    originLabel = originCountryName;
+    originIso = originExternalIso;
+  } else {
+    originIso = trackingIso;
+    if (originIso) originLabel = countryNameFromIso(originIso) || originIso;
+  }
+
+  const destinationCity = readText(events.find((event) => event.destinationCity)?.destinationCity);
+  const destinationCityFromOffice = events
+    .map((event) => detectBoliviaDepartment(event.office) || detectBoliviaDepartment(event.nextOffice))
+    .find(Boolean);
+  const destinationPayloadIso =
+    getCountryCode(events.find((event) => getCountryCode(event.destinationCountryIso))?.destinationCountryIso) || null;
+  const destinationPayloadName = readText(events.find((event) => readText(event.destinationCountryName))?.destinationCountryName);
+  const destinationIsoFromCity = destinationPayloadIso || (destinationCity ? countryIsoFromName(destinationCity) : null);
+  const destinationIsoCandidates = events.flatMap((event) =>
+    [event.office, event.nextOffice]
+      .filter((office) => readText(office) && !isGenericOriginOffice(office))
+      .map((office) => parseIsoFromOffice(office))
+      .filter(Boolean)
+  );
+  const destinationIso =
+    destinationIsoCandidates.find((iso) => String(iso).toUpperCase() !== "BO") ||
+    destinationIsoCandidates[0] ||
+    null;
+  const hasEdiInboundSignals = events.some((event) => {
+    const name = normalizeText(event.nombre_evento || event.title);
+    const source = normalizeText(event.tabla_origen);
+    return (
+      name.includes("(entrada)") ||
+      name.includes(" entrada ") ||
+      name.includes("(inb)") ||
+      name.includes(" inb") ||
+      source.includes("ips5db-edi") ||
+      source.includes("-edi")
+    );
+  });
+  const forceInternational = isS10Code && isBolivianCode && destinationCity === "" && hasEdiInboundSignals;
+  const destinationOnlyBoliviaOffice = isBolivianCode && destinationCity === "" && !routeOut && destinationIso === "BO";
+  const isNationalDestination =
+    !forceInternational &&
+    !destinationOnlyBoliviaOffice &&
+    ((destinationCity !== "" && destinationIsoFromCity === null) || destinationIso === "BO" || serviceLabel === "CONTRATO");
+  const explicitInternationalEntry =
+    !isBolivianCode &&
+    originIso !== null &&
+    originIso !== "BO" &&
+    destinationPayloadIso === null &&
+    destinationPayloadName === "" &&
+    destinationCityFromOffice !== undefined;
+
+  let destinationFlagIso = null;
+  let destinationLabel = "Internacional";
+
+  if (destinationIsoFromCity !== null) {
+    destinationFlagIso = destinationIsoFromCity;
+    destinationLabel = destinationPayloadName !== "" ? destinationPayloadName : countryNameFromIso(destinationFlagIso) || destinationCity;
+  } else if (explicitInternationalEntry) {
+    destinationFlagIso = "BO";
+    destinationLabel = destinationCityFromOffice || "Bolivia";
+  } else if (isBolivianCode && routeOut) {
+    destinationFlagIso = routeOut.destinationIso;
+    destinationLabel = countryNameFromIso(destinationFlagIso) || destinationFlagIso;
+  } else if (destinationOnlyBoliviaOffice) {
+    destinationFlagIso = null;
+    destinationLabel = "Internacional";
+  } else {
+    destinationLabel = destinationCity !== "" ? capitalizeWords(destinationCity) : isNationalDestination ? "Nacional" : destinationIso || "Internacional";
+    destinationFlagIso = isNationalDestination ? "BO" : destinationIso;
+  }
+
+  return {
+    latestEvent,
+    originIso,
+    originLabel,
+    destinationIso: destinationFlagIso,
+    destinationLabel,
+    isNationalDestination,
+  };
 };
 
 export default function ResultScreen({ route }) {
   const theme = useTheme();
   const { t, language } = useI18n();
   const styles = useMemo(() => createStyles(theme), [theme]);
-  const { colors, typography } = theme;
+  const { colors } = theme;
   const insets = useSafeAreaInsets();
 
   const initialData = route?.params?.data;
@@ -226,6 +378,7 @@ export default function ResultScreen({ route }) {
     return getTrackingEvents(data)
       .map((event) => ({
         ...event,
+        codigo: readText(event?.codigo || codigo),
         createdAt: event?.created_at || event?.updated_at || null,
         date: toDate(event?.created_at || event?.updated_at),
         dayParts: parseRawDateParts(event?.created_at || event?.updated_at || null),
@@ -233,12 +386,16 @@ export default function ResultScreen({ route }) {
         service: readText(event?.servicio),
         office: readText(event?.office),
         nextOffice: readText(event?.next_office),
+        description: readText(event?.descripcion),
         originCity: readText(event?.ciudad_origen),
         destinationCity: readText(event?.ciudad_destino),
+        destinationCountryIso: readText(event?.pais_destino_iso2),
+        destinationCountryName: readText(event?.pais_destino_nombre),
+        tabla_origen: readText(event?.tabla_origen),
       }))
       .filter((event) => !!event.date)
       .sort((a, b) => b.date - a.date);
-  }, [data, t]);
+  }, [codigo, data, t]);
 
   const grouped = useMemo(() => {
     const map = new Map();
@@ -258,39 +415,9 @@ export default function ResultScreen({ route }) {
   }, [events]);
 
   const presentation = useMemo(() => getTrackingPresentation(data, t), [data, t]);
-  const latestEvent = events[0] || null;
-  const latestDateParts = parseRawDateParts(latestEvent?.createdAt || null);
-  const serviceLabel = readText(latestEvent?.service).toUpperCase() || "EMS";
-  const originCity = readText(events.find((event) => event.originCity)?.originCity);
-  const destinationCity = readText(events.find((event) => event.destinationCity)?.destinationCity);
-  const destinationIso = events.reduce((found, event) => {
-    if (found) return found;
-    return parseIsoFromOffice(event.office) || parseIsoFromOffice(event.nextOffice) || null;
-  }, null);
-  const trackingIso = parseIsoFromCode(codigo);
-  const originEvent = events.find((event) => countryNameFromOffice(event.office));
-  const originCountryName = originEvent ? countryNameFromOffice(originEvent.office) : "";
-  const originCountryIso = originEvent
-    ? parseIsoFromCode(originEvent.code || codigo) || countryIsoFromName(originCountryName)
-    : null;
-
-  const originIso = originCity ? "BO" : originCountryIso || trackingIso;
-  const originLabel = originCountryName
-    ? countryNameFromIso(originCountryIso || countryIsoFromName(originCountryName))
-    : originCity
-      ? formatLocationLabel(originCity)
-      : originIso
-        ? countryNameFromIso(originIso)
-        : t("scan.heroPostal", "Correos de Bolivia");
-
-  const isNationalDestination = !!destinationCity || destinationIso === "BO" || trackingIso === "BO" || serviceLabel === "CONTRATO";
-  const destinationLabel = destinationCity
-    ? formatLocationLabel(destinationCity)
-    : isNationalDestination
-      ? "Nacional"
-      : destinationIso
-        ? countryNameFromIso(destinationIso)
-        : "Internacional";
+  const latestDateParts = parseRawDateParts(events[0]?.createdAt || null);
+  const serviceLabel = readText(events[0]?.service).toUpperCase() || "EMS";
+  const summary = useMemo(() => resolveSummary(events, codigo, serviceLabel, t), [events, codigo, serviceLabel, t]);
 
   const pickupNotice = useMemo(() => {
     if (presentation.delivered) {
@@ -299,7 +426,7 @@ export default function ResultScreen({ route }) {
         detail: null,
       };
     }
-    const readyEvent = events.find((event) => includesAny(lower(event.title), READY_FOR_PICKUP_TERMS));
+    const readyEvent = events.find((event) => includesAny(normalizeText(event.title), READY_FOR_PICKUP_TERMS));
     if (!readyEvent) return null;
     const officeIso = parseIsoFromOffice(readyEvent.office);
     const isBolivia = officeIso === "BO" || parseIsoFromCode(codigo) === "BO";
@@ -312,7 +439,7 @@ export default function ResultScreen({ route }) {
         : t("result.notice.pickupBolivia", "Tu paquete esta listo para entregar. Debes pasar a recoger en tu oficina de destino en Bolivia."),
       detail,
     };
-  }, [codigo, events, presentation.delivered]);
+  }, [codigo, events, presentation.delivered, t]);
 
   const isHighlightedEvent = (event) => {
     if (!highlight) return false;
@@ -362,34 +489,32 @@ export default function ResultScreen({ route }) {
       >
         <Card style={styles.statusCard}>
           <View style={styles.statusBanner}>
-            <View style={[styles.statusIcon, { backgroundColor: presentation.delivered ? `${colors.success}18` : `${colors.primary}18` }]}>
+            <View style={[styles.statusOrb, styles.statusOrbA]} />
+            <View style={[styles.statusOrb, styles.statusOrbB]} />
+            <View style={styles.statusIcon}>
               <Ionicons
                 name={presentation.delivered ? "checkmark" : "ellipse"}
-                size={22}
-                color={presentation.delivered ? colors.success : colors.primaryDark}
+                size={18}
+                color={presentation.delivered ? "#3EA52F" : "#0F3F7B"}
               />
             </View>
             <View style={styles.statusBody}>
               <Text style={styles.statusTitle}>{presentation.globalStatus}</Text>
-              <Text style={styles.statusSubtitle}>{latestEvent?.title || t("event.default", "Event")}</Text>
+              <Text style={styles.statusSubtitle}>{summary.latestEvent?.title || t("event.default", "Event")}</Text>
               <Text style={styles.statusCode}>Tracking: {codigo}</Text>
             </View>
           </View>
 
           <View style={styles.summaryGrid}>
-            <SummaryTile label={t("result.origin", "Origen")} value={originLabel} iso2={originIso} styles={styles} />
-            <SummaryTile label={t("result.destination", "Destino")} value={destinationLabel} iso2={isNationalDestination ? "BO" : destinationIso} styles={styles} />
-            <SummaryTile label={t("result.service", "Servicio")} value={serviceLabel} styles={styles} />
-            <SummaryTile
-              label={t("result.lastUpdate", "Ultima actualizacion")}
-              value={latestDateParts ? `${latestDateParts.dayLabel} ${latestDateParts.timeLabel}` : "-"}
-              styles={styles}
-            />
+            <SummaryTile label="Origen postal" value={summary.originLabel} iso2={summary.originIso} accentStyle={styles.metaAccentA} styles={styles} />
+            <SummaryTile label="Destino de entrega" value={summary.destinationLabel} iso2={summary.destinationIso} accentStyle={styles.metaAccentB} styles={styles} />
+            <SummaryTile label="Servicio" value={serviceLabel} accentStyle={styles.metaAccentC} styles={styles} />
+            <SummaryTile label="Ultima actualizacion" value={latestDateParts ? `${latestDateParts.dayLabel} ${latestDateParts.timeLabel}` : "-"} accentStyle={styles.metaAccentD} styles={styles} />
           </View>
 
           {cacheMeta?.fromCache ? (
             <Text style={styles.cacheText}>
-              {cacheMeta?.stale ? t("result.cacheStale", "Data saved a while ago") : t("result.cacheFresh", "Recently saved data")}
+              {cacheMeta?.stale ? t("result.cacheStale", "Datos guardados hace un tiempo") : t("result.cacheFresh", "Datos guardados recientemente")}
             </Text>
           ) : null}
           {refreshError ? (
@@ -402,32 +527,24 @@ export default function ResultScreen({ route }) {
 
         <Card style={styles.progressCard}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>{t("result.progressTitle", "Progreso del envio")}</Text>
+            <Text style={styles.cardTitle}>Progreso del envio</Text>
             <Text style={styles.cardMeta}>
-              {t("result.currentStep", "Paso actual")}: <Text style={styles.cardMetaStrong}>{presentation.currentStepLabel}</Text>
+              Paso actual: <Text style={styles.cardMetaStrong}>{presentation.currentStepLabel}</Text>
             </Text>
           </View>
 
-          <View style={styles.progressTrack}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.progressTrack}>
             {presentation.steps.map((step, index) => {
               const done = index < presentation.currentStep;
               const current = index === presentation.currentStep;
-              const lineLeftDone = index <= presentation.currentStep;
-              const lineRightDone = index < presentation.currentStep;
               return (
                 <View key={step} style={styles.progressStep}>
                   <View style={styles.progressNodeRow}>
-                    <View style={[styles.progressLineSide, index === 0 ? styles.progressLineHidden : null, lineLeftDone ? styles.progressLineDone : null]} />
+                    <View style={[styles.progressLine, index === 0 ? styles.progressLineHidden : null, done || current ? styles.progressLineDone : null]} />
                     <View style={[styles.progressDot, done ? styles.progressDotDone : null, current ? styles.progressDotCurrent : null]}>
-                      <Ionicons name={done ? "checkmark" : current ? "ellipse" : "ellipse-outline"} size={10} color={done || current ? "#fff" : colors.muted} />
+                      <Ionicons name={done ? "checkmark" : current ? "ellipse" : "ellipse-outline"} size={10} color={done || current ? "#fff" : "#8CA1BC"} />
                     </View>
-                    <View
-                      style={[
-                        styles.progressLineSide,
-                        index === presentation.steps.length - 1 ? styles.progressLineHidden : null,
-                        lineRightDone ? styles.progressLineDone : null,
-                      ]}
-                    />
+                    <View style={[styles.progressLine, index === presentation.steps.length - 1 ? styles.progressLineHidden : null, done ? styles.progressLineDone : null]} />
                   </View>
                   <Text style={[styles.progressLabel, done || current ? styles.progressLabelActive : null]} numberOfLines={2}>
                     {step}
@@ -435,7 +552,7 @@ export default function ResultScreen({ route }) {
                 </View>
               );
             })}
-          </View>
+          </ScrollView>
         </Card>
 
         {pickupNotice ? (
@@ -443,8 +560,8 @@ export default function ResultScreen({ route }) {
             <Text style={styles.noticeText}>{pickupNotice.message}</Text>
             {pickupNotice.detail ? (
               <View style={styles.noticeDetail}>
-                <InfoRow label={t("result.office", "Office")} value={pickupNotice.detail.regional} icon="business-outline" styles={styles} theme={theme} />
-                <InfoRow label={t("result.address", "Direccion")} value={pickupNotice.detail.direccion} icon="location-outline" styles={styles} theme={theme} />
+                <InfoRow label="Oficina" value={pickupNotice.detail.regional} icon="business-outline" styles={styles} theme={theme} />
+                <InfoRow label="Direccion" value={pickupNotice.detail.direccion} icon="location-outline" styles={styles} theme={theme} />
               </View>
             ) : null}
           </Card>
@@ -452,29 +569,27 @@ export default function ResultScreen({ route }) {
 
         <Card style={styles.historyCard}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>{t("result.historyTitle", "Historial de seguimiento")}</Text>
+            <Text style={styles.cardTitle}>Historial de seguimiento</Text>
           </View>
 
           {events.length === 0 ? (
             <View style={styles.emptyHistory}>
-              <Text style={[typography.h2, { textAlign: "center" }]}>{t("result.noEvents", "No events")}</Text>
-              <Text style={[typography.p, { textAlign: "center", marginTop: 6 }]}>{readText(data?.message) || t("result.noEventsDesc", "Este codigo no tiene registros de seguimiento.")}</Text>
+              <Text style={styles.emptyTitle}>{t("result.noEvents", "No events")}</Text>
+              <Text style={styles.emptyText}>{readText(data?.message) || t("result.noEventsDesc", "Este codigo no tiene registros de seguimiento.")}</Text>
             </View>
           ) : (
             grouped.map((group) => (
               <View key={group.dayKey} style={styles.historyGroup}>
                 <View style={styles.historyGroupHead}>
                   <Text style={styles.historyGroupTitle}>{group.dayLabel}</Text>
-                  <Text style={styles.historyGroupCount}>{group.events.length} {t("result.eventCount", "evento(s)")}</Text>
+                  <Text style={styles.historyGroupCount}>{group.events.length} evento(s)</Text>
                 </View>
 
                 <View style={styles.historyFeed}>
                   {group.events.map((event, index) => {
                     const isTopEvent = index === 0 && group.dayKey === grouped[0]?.dayKey;
-                    const shouldHighlightLatest = presentation.currentStep >= 3; // Ventanilla or later, aligned with bolipost behavior.
-                    const isLatest = isTopEvent && shouldHighlightLatest;
                     return (
-                      <View key={`${group.dayKey}-${index}`} style={[styles.historyEvent, isLatest ? styles.historyEventLatest : null, isHighlightedEvent(event) ? styles.historyEventNew : null]}>
+                      <View key={`${group.dayKey}-${index}`} style={[styles.historyEvent, isTopEvent ? styles.historyEventLatest : null, isHighlightedEvent(event) ? styles.historyEventNew : null]}>
                         <View style={styles.historySide}>
                           <Text style={styles.historyTime}>{event?.dayParts?.timeLabel || "--:--"}</Text>
                         </View>
@@ -482,15 +597,16 @@ export default function ResultScreen({ route }) {
                           <Text style={styles.historyEventTitle}>{event.title}</Text>
                           <View style={styles.historyMeta}>
                             <InfoRow
-                              label={t("result.office", "Office")}
+                              label="Oficina"
                               value={event.office}
                               icon="business-outline"
                               styles={styles}
                               theme={theme}
+                              hideRow={isGenericOriginOffice(event.office)}
                               iso2={parseIsoFromOffice(event.office) || countryIsoFromName(countryNameFromOffice(event.office))}
                             />
                             <InfoRow
-                              label={t("result.nextOffice", "Next office")}
+                              label="Siguiente oficina"
                               value={event.nextOffice}
                               icon="navigate-outline"
                               styles={styles}
@@ -498,6 +614,11 @@ export default function ResultScreen({ route }) {
                               iso2={parseIsoFromOffice(event.nextOffice) || countryIsoFromName(countryNameFromOffice(event.nextOffice))}
                             />
                           </View>
+                          {isDeliveredEvent(event) ? (
+                            <View style={styles.latestBadge}>
+                              <Text style={styles.latestBadgeText}>Entregado</Text>
+                            </View>
+                          ) : null}
                         </View>
                       </View>
                     );
@@ -519,21 +640,23 @@ export default function ResultScreen({ route }) {
   );
 }
 
-function SummaryTile({ label, value, iso2, styles }) {
+function SummaryTile({ label, value, iso2, accentStyle, styles }) {
   const flagUrl = getFlagUrl(iso2);
   return (
-    <View style={styles.summaryTile}>
+    <View style={[styles.summaryTile, accentStyle]}>
       <Text style={styles.summaryLabel}>{label}</Text>
       <View style={styles.summaryValueRow}>
-        <Text style={styles.summaryValue}>{value || "-"}</Text>
+        <Text style={styles.summaryValue} numberOfLines={2}>
+          {value || "-"}
+        </Text>
         {flagUrl ? <Image source={{ uri: flagUrl }} style={styles.summaryFlag} /> : null}
       </View>
     </View>
   );
 }
 
-function InfoRow({ label, value, icon, theme, styles, iso2 }) {
-  if (!readText(value)) return null;
+function InfoRow({ label, value, icon, theme, styles, iso2, hideRow = false }) {
+  if (!readText(value) || hideRow) return null;
   const flagUrl = getFlagUrl(iso2);
   return (
     <View style={styles.infoRow}>
@@ -556,61 +679,70 @@ const createStyles = (t) =>
     emptyCard: { borderTopWidth: 0, borderRadius: 22, paddingVertical: 24, alignItems: "center" },
     emptyTitle: { color: t.colors.text, fontWeight: "900", fontSize: 18, textAlign: "center" },
     emptyText: { marginTop: 8, color: t.colors.muted, fontWeight: "700", textAlign: "center", lineHeight: 21 },
-    statusCard: { padding: 14, borderRadius: 22, borderTopWidth: 0, backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.96)" : "#F8FAFC", marginBottom: 12 },
-    statusBanner: { flexDirection: "row", gap: 12, alignItems: "center", padding: 14, borderRadius: 18, backgroundColor: t.isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF", borderWidth: 1, borderColor: t.colors.border },
-    statusIcon: { width: 48, height: 48, borderRadius: 14, alignItems: "center", justifyContent: "center" },
+    statusCard: { padding: 0, borderRadius: 20, borderWidth: 1, borderColor: "rgba(162, 186, 219, 0.65)", borderTopWidth: 1, backgroundColor: "rgba(255,255,255,0.82)", overflow: "hidden", marginBottom: 12 },
+    statusBanner: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 18, paddingHorizontal: 18, backgroundColor: "#0F3F7B", position: "relative", overflow: "hidden" },
+    statusOrb: { position: "absolute", borderRadius: 999 },
+    statusOrbA: { width: 108, height: 108, right: -20, top: -20, backgroundColor: "rgba(254,203,52,0.32)" },
+    statusOrbB: { width: 78, height: 78, right: 120, bottom: -28, backgroundColor: "rgba(76,160,255,0.28)" },
+    statusIcon: { width: 42, height: 42, borderRadius: 999, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", shadowColor: "#fff", shadowOpacity: 0.2, shadowOffset: { width: 0, height: 0 }, shadowRadius: 8, elevation: 3 },
     statusBody: { flex: 1 },
-    statusTitle: { fontSize: 21, fontWeight: "900", color: t.colors.text, lineHeight: 25 },
-    statusSubtitle: { marginTop: 3, fontSize: 13, fontWeight: "700", color: t.colors.text, opacity: 0.9, lineHeight: 18 },
-    statusCode: { marginTop: 5, color: t.colors.muted, fontSize: 11, fontWeight: "800" },
-    summaryGrid: { marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 8 },
-    summaryTile: { width: "48%", minHeight: 74, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF" },
-    summaryLabel: { color: t.colors.muted, fontSize: 9, fontWeight: "900", textTransform: "uppercase", letterSpacing: 0.7 },
-    summaryValueRow: { marginTop: 7, flexDirection: "row", alignItems: "center", gap: 8 },
-    summaryValue: { flex: 1, color: t.colors.text, fontWeight: "900", fontSize: 13, lineHeight: 18 },
-    summaryFlag: { width: 22, height: 16, borderRadius: 3, borderWidth: 1, borderColor: t.colors.border },
-    cacheText: { marginTop: 7, color: t.colors.muted, fontWeight: "700", fontSize: 11 },
-    refreshWrap: { marginTop: 10 },
+    statusTitle: { color: "#FFFFFF", fontWeight: "900", fontSize: 24, lineHeight: 28 },
+    statusSubtitle: { marginTop: 4, color: "rgba(255,255,255,0.96)", fontWeight: "700", fontSize: 14, lineHeight: 18 },
+    statusCode: { marginTop: 6, color: "#FFEA9B", fontSize: 12, fontWeight: "900" },
+    summaryGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 16, backgroundColor: "rgba(255,255,255,0.94)" },
+    summaryTile: { width: "48%", minHeight: 78, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12, borderWidth: 1, borderColor: "#D9E5F4", backgroundColor: "#FFFFFF" },
+    metaAccentA: { borderTopWidth: 3, borderTopColor: "#2D7FD7" },
+    metaAccentB: { borderTopWidth: 3, borderTopColor: "#34A37A" },
+    metaAccentC: { borderTopWidth: 3, borderTopColor: "#F3BA1A" },
+    metaAccentD: { borderTopWidth: 3, borderTopColor: "#8F77F0" },
+    summaryLabel: { color: "#5D7596", fontSize: 10, fontWeight: "800" },
+    summaryValueRow: { marginTop: 6, flexDirection: "row", alignItems: "center", gap: 8 },
+    summaryValue: { flex: 1, color: "#112F52", fontWeight: "900", fontSize: 13, lineHeight: 18 },
+    summaryFlag: { width: 20, height: 15, borderRadius: 2, borderWidth: 1, borderColor: "#CDDCF0" },
+    cacheText: { paddingHorizontal: 16, paddingBottom: 12, color: "#5D7596", fontWeight: "700", fontSize: 11 },
+    refreshWrap: { paddingHorizontal: 16, paddingBottom: 16 },
     refreshText: { marginBottom: 8, color: t.colors.text, fontWeight: "700", fontSize: 12 },
-    progressCard: { padding: 14, borderRadius: 22, borderTopWidth: 0, backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.96)" : "#F8FAFC", marginBottom: 12 },
-    cardHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-    cardTitle: { fontSize: 16, fontWeight: "900", color: t.colors.text },
-    cardMeta: { color: t.colors.muted, fontWeight: "700", fontSize: 11 },
-    cardMetaStrong: { color: t.colors.text, fontWeight: "900" },
-    progressTrack: { marginTop: 14, flexDirection: "row", alignItems: "flex-start", justifyContent: "space-between", paddingHorizontal: 2 },
-    progressStep: { flex: 1, alignItems: "center", minWidth: 0 },
+    progressCard: { paddingTop: 14, paddingBottom: 16, paddingHorizontal: 0, borderRadius: 14, borderTopWidth: 1, borderColor: "rgba(160, 186, 218, 0.65)", backgroundColor: "rgba(255,255,255,0.82)", marginBottom: 12 },
+    cardHead: { paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+    cardTitle: { fontSize: 17, fontWeight: "900", color: "#122F54" },
+    cardMeta: { color: "#5D7596", fontWeight: "700", fontSize: 11 },
+    cardMetaStrong: { color: "#1A549A", fontWeight: "900" },
+    progressTrack: { paddingHorizontal: 12, paddingTop: 16, gap: 0 },
+    progressStep: { width: 96, alignItems: "center" },
     progressNodeRow: { width: "100%", flexDirection: "row", alignItems: "center", marginBottom: 8 },
-    progressDot: { width: 18, height: 18, borderRadius: 9, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.colors.surface },
-    progressDotDone: { backgroundColor: t.colors.success, borderColor: t.colors.success },
-    progressDotCurrent: { backgroundColor: t.colors.primaryDark, borderColor: t.colors.primaryDark },
-    progressLineSide: { flex: 1, height: 2, borderRadius: 99, backgroundColor: t.colors.border },
+    progressLine: { flex: 1, height: 2, backgroundColor: "#BCCCE2" },
     progressLineHidden: { backgroundColor: "transparent" },
-    progressLineDone: { backgroundColor: t.colors.success },
-    progressLabel: { color: t.colors.muted, fontSize: 9, fontWeight: "800", textAlign: "center", lineHeight: 12, paddingHorizontal: 3, maxWidth: "100%", minHeight: 26 },
-    progressLabelActive: { color: t.colors.text },
-    noticeCard: { padding: 14, borderRadius: 20, borderTopWidth: 0, backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.96)" : "#F8FAFC", marginBottom: 12 },
-    noticeText: { color: t.colors.text, fontWeight: "800", lineHeight: 20, fontSize: 13 },
-    noticeDetail: { marginTop: 10, padding: 12, borderRadius: 16, borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF" },
-    historyCard: { padding: 14, borderRadius: 22, borderTopWidth: 0, backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.96)" : "#F8FAFC" },
-    emptyHistory: { alignItems: "center", paddingVertical: 20 },
-    historyGroup: { marginTop: 16 },
-    historyGroupHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: t.colors.border },
-    historyGroupTitle: { color: t.colors.text, fontWeight: "900", fontSize: 14 },
-    historyGroupCount: { color: t.colors.muted, fontWeight: "800", fontSize: 10 },
-    historyFeed: { marginTop: 12, gap: 10 },
-    historyEvent: { flexDirection: "row", gap: 10, borderRadius: 16, padding: 12, borderWidth: 1, borderColor: t.colors.border, backgroundColor: t.isDark ? "rgba(255,255,255,0.03)" : "#FFFFFF" },
-    historyEventLatest: { borderColor: "#E3C571", backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.10)" : "#F8F3E2" },
-    historyEventNew: { borderColor: `${t.colors.success}66`, backgroundColor: t.isDark ? "rgba(34, 197, 94, 0.10)" : "rgba(34, 197, 94, 0.08)" },
-    historySide: { width: 42, alignItems: "center", justifyContent: "flex-start", paddingTop: 2 },
-    historyTime: { color: t.colors.muted, fontWeight: "900", fontSize: 11 },
-    historyBody: { flex: 1 },
-    historyEventTitle: { color: t.colors.text, fontWeight: "900", fontSize: 14, lineHeight: 19 },
-    historyMeta: { marginTop: 10, paddingTop: 10, borderTopWidth: 1, borderTopColor: t.colors.border },
-    infoRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 6, borderWidth: 1, borderColor: t.colors.border, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 6 },
-    infoBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 6 },
-    infoLabel: { color: t.colors.muted, fontWeight: "900", fontSize: 10, textTransform: "uppercase", letterSpacing: 0.35 },
-    infoValue: { flex: 1, color: t.colors.text, fontWeight: "700", lineHeight: 17, fontSize: 12, opacity: 0.95 },
-    infoFlag: { width: 18, height: 12, borderRadius: 2, borderWidth: 1, borderColor: t.colors.border, marginTop: 2 },
-    loaderOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: t.isDark ? "rgba(2, 6, 23, 0.55)" : "rgba(255, 255, 255, 0.78)", zIndex: 99 },
+    progressLineDone: { backgroundColor: "#3EA52F" },
+    progressDot: { width: 34, height: 34, borderRadius: 999, borderWidth: 2, borderColor: "#B8C8DC", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+    progressDotDone: { borderColor: "#3EA52F", backgroundColor: "#3EA52F" },
+    progressDotCurrent: { borderColor: "#3EA52F", backgroundColor: "#3EA52F" },
+    progressLabel: { color: "#4D6788", fontSize: 11, fontWeight: "700", textAlign: "center", lineHeight: 14, minHeight: 30, paddingHorizontal: 4 },
+    progressLabelActive: { color: "#2B7E22", fontWeight: "900" },
+    noticeCard: { padding: 14, borderRadius: 14, borderTopWidth: 1, borderColor: "#B8DFC2", backgroundColor: "#F3FFF6", marginBottom: 12 },
+    noticeText: { color: "#1F5B33", fontWeight: "900", lineHeight: 20, fontSize: 13 },
+    noticeDetail: { marginTop: 10, gap: 8 },
+    historyCard: { paddingTop: 14, paddingBottom: 12, paddingHorizontal: 0, borderRadius: 14, borderTopWidth: 1, borderColor: "rgba(160, 186, 218, 0.65)", backgroundColor: "rgba(255,255,255,0.82)" },
+    emptyHistory: { alignItems: "center", paddingVertical: 20, paddingHorizontal: 16 },
+    historyGroup: { marginTop: 14, paddingHorizontal: 16 },
+    historyGroupHead: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 },
+    historyGroupTitle: { color: "#173F70", fontWeight: "900", fontSize: 15 },
+    historyGroupCount: { color: "#6A7F99", fontWeight: "700", fontSize: 11 },
+    historyFeed: { gap: 10 },
+    historyEvent: { flexDirection: "row", gap: 0, borderWidth: 1, borderColor: "#DFE9F5", borderRadius: 12, backgroundColor: "#FFFFFF", overflow: "hidden" },
+    historyEventLatest: { borderColor: "#C6E8D2", backgroundColor: "#FFFFFF" },
+    historyEventNew: { borderColor: "#A7E0B6" },
+    historySide: { width: 72, alignItems: "center", justifyContent: "center", backgroundColor: "#F7FAFF", borderRightWidth: 1, borderRightColor: "#DEE8F5", paddingVertical: 12, paddingHorizontal: 8 },
+    historyTime: { color: "#163D6C", fontWeight: "900", fontSize: 13 },
+    historyBody: { flex: 1, padding: 12 },
+    historyEventTitle: { color: "#142F52", fontWeight: "900", fontSize: 14, lineHeight: 19 },
+    historyMeta: { marginTop: 10, gap: 6 },
+    infoRow: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#E1EAF5", borderRadius: 8, backgroundColor: "#F7FBFF", paddingHorizontal: 8, paddingVertical: 6 },
+    infoBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 4 },
+    infoLabel: { color: "#5F7898", fontWeight: "900", fontSize: 10, textTransform: "uppercase" },
+    infoValue: { flex: 1, color: "#213F61", fontWeight: "700", lineHeight: 17, fontSize: 12 },
+    infoFlag: { width: 18, height: 12, borderRadius: 2, borderWidth: 1, borderColor: "#CDDCF0" },
+    latestBadge: { alignSelf: "flex-start", marginTop: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "#EAF8EE", borderWidth: 1, borderColor: "#C6E5CC" },
+    latestBadgeText: { color: "#277D31", fontSize: 11, fontWeight: "900" },
+    loaderOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255, 255, 255, 0.78)", zIndex: 99 },
     loaderText: { marginTop: 10, color: t.colors.muted, fontWeight: "800" },
   });

@@ -4,21 +4,21 @@ import { Platform, useColorScheme } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const LIGHT = {
-  bg: "#F3F6FA",
+  bg: "#EEF3FB",
   surface: "#FFFFFF",
-  text: "#111827",
-  muted: "#5B6575",
-  border: "rgba(17, 24, 39, 0.12)",
+  text: "#12345D",
+  muted: "#5D7596",
+  border: "rgba(162, 186, 219, 0.55)",
   primary: "#FECC36",
-  primaryDark: "#DAA611",
-  success: "#16A34A",
+  primaryDark: "#D9A913",
+  success: "#3EA52F",
   warning: "#FECC36",
-  danger: "#DC2626",
-  secondary: "#0F172A",
-  secondaryDark: "#0F172A",
-  overlay: "rgba(15, 23, 42, 0.46)",
-  gradA: "#F7FAFD",
-  gradB: "#FDF4D6",
+  danger: "#CA4646",
+  secondary: "#12345D",
+  secondaryDark: "#0F3F7B",
+  overlay: "rgba(15, 23, 42, 0.42)",
+  gradA: "#EEF3FB",
+  gradB: "#E5EDF9",
 };
 
 const DARK = {

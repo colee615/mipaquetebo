@@ -11,10 +11,12 @@
       "backgroundColor": "#fed122"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "buildNumber": "1"
     },
     "android": {
       "usesCleartextTraffic": true,
+      "versionCode": 1,
       "package": "com.colee_615.scannerapp",
       "icon": "./assets/app-icon.png",
       "adaptiveIcon": {

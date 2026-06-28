@@ -28,6 +28,7 @@ import { ThemeProvider, useTheme } from "./src/theme/ui";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { fetchTrackingByCode } from "./src/services/trackingApi";
 import { checkAppUpdate } from "./src/services/updateCheck";
+import { runStorageMigrations } from "./src/services/storageMigration";
 import { normalizeTrackingCode, validateTrackingCode } from "./src/utils/tracking";
 import { LanguageProvider, useI18n } from "./src/i18n/ui";
 
@@ -50,6 +51,7 @@ function AppRoot() {
   const [openingFromNotification, setOpeningFromNotification] = useState(false);
   const [showLegacyNotifPrompt, setShowLegacyNotifPrompt] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
+  const [startupReady, setStartupReady] = useState(false);
   const baseTheme = theme.isDark ? DarkTheme : DefaultTheme;
   const navTheme = {
     ...baseTheme,
@@ -93,9 +95,12 @@ function AppRoot() {
   useEffect(() => {
     (async () => {
       try {
+        const appVersion = String(Constants?.expoConfig?.version || "0.0.0");
+        await runStorageMigrations(appVersion);
         const update = await checkAppUpdate();
         if (update?.shouldShow) setUpdateInfo(update);
       } catch {}
+      setStartupReady(true);
     })();
   }, []);
 
@@ -138,9 +143,27 @@ function AppRoot() {
         barStyle={theme.isDark ? "light-content" : "dark-content"}
         backgroundColor={theme.colors.bg}
       />
-      <NavigationContainer ref={navigationRef} theme={navTheme}>
-        <StackNavigator />
-      </NavigationContainer>
+      {startupReady ? (
+        <NavigationContainer ref={navigationRef} theme={navTheme}>
+          <StackNavigator />
+        </NavigationContainer>
+      ) : (
+        <View
+          style={[
+            styles.loaderOverlay,
+            {
+              backgroundColor: theme.isDark
+                ? "rgba(2, 6, 23, 0.88)"
+                : "rgba(255, 255, 255, 0.94)",
+            },
+          ]}
+        >
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text style={[styles.loaderText, { color: theme.colors.muted }]}>
+            Preparando datos de la aplicacion...
+          </Text>
+        </View>
+      )}
       {openingFromNotification && (
         <View style={[styles.loaderOverlay, { backgroundColor: theme.isDark ? "rgba(2, 6, 23, 0.6)" : "rgba(255, 255, 255, 0.82)" }]}>
           <ActivityIndicator size="large" color={theme.colors.primary} />

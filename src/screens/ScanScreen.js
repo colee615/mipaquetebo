@@ -784,6 +784,7 @@ const createStyles = (t) =>
     },
     hero: {
       marginBottom: t.spacing.lg,
+      paddingVertical: 4,
     },
     heroKicker: {
       fontSize: 11,
@@ -794,12 +795,14 @@ const createStyles = (t) =>
     },
     title: {
       ...t.typography.h1,
-      fontSize: 28,
+      fontSize: 30,
+      color: "#0F3F7B",
     },
     subtitle: {
       ...t.typography.p,
       marginTop: 6,
       maxWidth: 360,
+      color: "#5D7596",
     },
     heroRow: {
       marginTop: t.spacing.sm,
@@ -809,9 +812,15 @@ const createStyles = (t) =>
     },
     scanCard: {
       marginBottom: t.spacing.md,
+      backgroundColor: "rgba(255,255,255,0.82)",
+      borderColor: "rgba(160, 186, 218, 0.65)",
+      borderTopWidth: 1,
     },
     inputCard: {
       marginTop: t.spacing.sm,
+      backgroundColor: "rgba(255,255,255,0.82)",
+      borderColor: "rgba(160, 186, 218, 0.65)",
+      borderTopWidth: 1,
     },
     sectionHeader: {
       marginBottom: t.spacing.sm,
@@ -819,12 +828,12 @@ const createStyles = (t) =>
     sectionTitle: {
       fontSize: 17,
       fontWeight: "900",
-      color: t.colors.text,
+      color: "#122F54",
       letterSpacing: 0.1,
     },
     sectionDesc: {
       marginTop: 4,
-      color: t.colors.muted,
+      color: "#5D7596",
       fontWeight: "700",
     },
     orRow: {
