@@ -17,13 +17,12 @@
     "android": {
       "usesCleartextTraffic": true,
       "versionCode": 1,
-      "package": "com.colee_615.scannerapp",
+      "package": "bo.gob.correos.trackingboapp",
       "icon": "./assets/app-icon.png",
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-foreground.png",
         "backgroundColor": "#fed122"
       },
-      "googleServicesFile": "./google-services.json",
       "useNextNotificationsApi": true,
       "permissions": [
         "POST_NOTIFICATIONS"
@@ -43,7 +42,7 @@
       "apiBearerToken": "eZMlItx6mQMNZjxoijEvf7K3pYvGGXMvEHmQcqvtlAPOEAPgyKDVOpyF7JP0ilbK",
       "enableUpdateCheck": true,
       "eas": {
-        "projectId": "bbce253f-3a9b-41ba-9fdf-7e95ebe62fb6"
+        "projectId": "b88235af-ae91-4e4b-9dd2-40c9ff786c08"
       }
     },
     "owner": ""
