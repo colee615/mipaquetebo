@@ -8,20 +8,20 @@ import { Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 
-export function Screen({ children }) {
+export function Screen({ children, edges = ["bottom", "left", "right"] }) {
   const theme = useTheme();
   if (theme.isDark) {
     return (
       <SafeAreaView
         style={{ flex: 1, backgroundColor: theme.colors.bg }}
-        edges={["bottom", "left", "right"]}
+        edges={edges}
       >
         {children}
       </SafeAreaView>
     );
   }
   return (
-    <SafeAreaView style={{ flex: 1 }} edges={["bottom", "left", "right"]}>
+    <SafeAreaView style={{ flex: 1 }} edges={edges}>
       <LinearGradient colors={theme.gradient} style={{ flex: 1 }}>
         <BrandBackdrop />
         {children}
@@ -47,8 +47,6 @@ function BrandBackdrop() {
           },
         ]}
       />
-      <View style={styles.brandBandTop} />
-      <View style={styles.brandBandBottom} />
     </View>
   );
 }
@@ -60,22 +58,6 @@ const styles = StyleSheet.create({
   brandCircle: {
     position: "absolute",
     backgroundColor: "rgba(254, 204, 54, 0.10)",
-  },
-  brandBandTop: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 6,
-    backgroundColor: "rgba(254, 204, 54, 0.95)",
-  },
-  brandBandBottom: {
-    position: "absolute",
-    right: 0,
-    bottom: 0,
-    left: 0,
-    height: 1,
-    backgroundColor: "rgba(17, 24, 39, 0.06)",
   },
 });
 

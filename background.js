@@ -66,7 +66,7 @@ async function checkCode(code) {
   const valid = validateTrackingCode(normalized);
   if (!valid.ok) return null;
 
-  const res = await fetchTrackingByCode(valid.value, { timeout: 15000, retries: 1 });
+  const res = await fetchTrackingByCode(valid.value, { timeout: 25000, retries: 0 });
   if (!res?.data?.existe_paquete) return null;
 
   const events = getTrackingEvents(res.data);

@@ -30,11 +30,28 @@ export const buildAuthHeaders = (headers = {}) => {
 
 export const getApiErrorKind = (error) => {
   if (!error) return "unknown";
-  if (error?.code === "ECONNABORTED") return "timeout";
+  const code = String(error?.code || "").toUpperCase();
+  const message = String(error?.message || "").toLowerCase();
+  if (code === "ECONNABORTED" || code === "ETIMEDOUT" || message.includes("timeout") || message.includes("timed out")) return "timeout";
   if (error?.response?.status) return "http";
   if (error?.message === "API_CONFIG_MISSING") return "config";
-  if (error?.request && !error?.response) return "network";
+  if (code === "ERR_NETWORK" || code === "ECONNRESET" || (error?.request && !error?.response)) return "network";
   return "unknown";
+};
+
+export const getApiResponseMessage = (error) => {
+  const data = error?.response?.data;
+  const candidates = [data?.message, data?.mensaje, data?.error];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  if (data?.errors && typeof data.errors === "object") {
+    for (const value of Object.values(data.errors)) {
+      const first = Array.isArray(value) ? value[0] : value;
+      if (typeof first === "string" && first.trim()) return first.trim();
+    }
+  }
+  return "";
 };
 
 export const getApiErrorMessage = (error, custom = {}) => {
@@ -51,8 +68,11 @@ export const getApiErrorMessage = (error, custom = {}) => {
     return custom.network || "No se pudo conectar al servidor";
   }
   if (kind === "http") {
+    if (status === 429) {
+      return custom.rateLimit || "Demasiadas consultas. Intenta de nuevo en unos segundos";
+    }
     if (status === 400 || status === 404 || status === 422) {
-      return custom.invalidCode || "Codigo invalido o no encontrado";
+      return getApiResponseMessage(error) || custom.invalidCode || "Codigo invalido o no encontrado";
     }
     if (status === 401 || status === 403) {
       return custom.auth || "Credenciales de API invalidas";

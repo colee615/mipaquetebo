@@ -1,11 +1,14 @@
-export const normalizeTrackingCode = (raw) =>
+export const normalizeTrackingCodeInput = (raw) =>
   String(raw || "")
     .trim()
     .toUpperCase()
-    .replace(/\s+/g, "");
+    .replace(/[^A-Z0-9\/-]/g, "");
+
+export const normalizeTrackingCode = (raw) =>
+  normalizeTrackingCodeInput(raw).replace(/[\/-]+/g, "");
 
 // Align mobile validation with bolipost backend rules:
-// required|string|max:50|regex:/^[A-Za-z0-9]+$/
+// The backend accepts separators and removes them before searching.
 export const isValidTrackingCode = (code) =>
   typeof code === "string" &&
   code.length > 0 &&
@@ -13,13 +16,14 @@ export const isValidTrackingCode = (code) =>
   /^[A-Z0-9]+$/.test(code);
 
 export const validateTrackingCode = (raw) => {
-  const normalized = normalizeTrackingCode(raw);
+  const input = normalizeTrackingCodeInput(raw);
+  const normalized = normalizeTrackingCode(input);
 
-  if (!normalized) {
+  if (!input || !normalized) {
     return { ok: false, value: "", reason: "empty" };
   }
 
-  if (!isValidTrackingCode(normalized)) {
+  if (input.length > 50 || !/^[A-Z0-9\/-]+$/.test(input) || !isValidTrackingCode(normalized)) {
     return { ok: false, value: normalized, reason: "format" };
   }
 

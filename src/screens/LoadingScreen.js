@@ -1,14 +1,18 @@
 import { useEffect, useMemo, useRef } from "react";
-import { View, Text, StyleSheet, Animated, Easing, Image } from "react-native";
+import { View, Text, StyleSheet, Animated, Easing, Image, useWindowDimensions } from "react-native";
 import { Asset } from "expo-asset";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 
-const APP_LOGO = require("../../assets/logoincio-start.png");
+const APP_LOGO = require("../../assets/logoincio-transparent.png");
+const APP_BACKGROUND = require("../../assets/fondo_inicio.png");
+const BACKGROUND_WIDTH = 720;
+const BACKGROUND_HEIGHT = 1280;
 
 export default function LoadingScreen({ navigation }) {
   const theme = useTheme();
   const { t } = useI18n();
+  const { width: viewportWidth, height: viewportHeight } = useWindowDimensions();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
   const bar = useRef(new Animated.Value(0)).current;
   const shimmer = useRef(new Animated.Value(0)).current;
@@ -17,6 +21,7 @@ export default function LoadingScreen({ navigation }) {
   useEffect(() => {
     // Warm up local assets to reduce first paint delay on Android.
     Asset.fromModule(APP_LOGO).downloadAsync().catch(() => {});
+    Asset.fromModule(APP_BACKGROUND).downloadAsync().catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -77,15 +82,21 @@ export default function LoadingScreen({ navigation }) {
   const shimmerTranslate = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-80, 180] });
   const haloScale = halo.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.06] });
   const haloOpacity = halo.interpolate({ inputRange: [0, 1], outputRange: [0.35, 0.12] });
+  // Slightly enlarge the artwork while keeping the original portrait proportion.
+  const backgroundScale = Math.min(viewportWidth / BACKGROUND_WIDTH, viewportHeight / BACKGROUND_HEIGHT) * 1.06;
+  const backgroundImageStyle = {
+    width: BACKGROUND_WIDTH * backgroundScale,
+    height: BACKGROUND_HEIGHT * backgroundScale,
+    left: (viewportWidth - BACKGROUND_WIDTH * backgroundScale) / 2,
+    top: (viewportHeight - BACKGROUND_HEIGHT * backgroundScale) / 2,
+  };
 
   return (
     <View style={styles.root}>
-      <View style={styles.topAccent} />
-      <View style={[styles.bgOrb, styles.bgOrbPrimary]} />
-      <View style={[styles.bgOrb, styles.bgOrbSoft]} />
-      <View style={styles.backdropBand} />
+      <Image source={APP_BACKGROUND} style={[styles.backgroundImage, backgroundImageStyle]} resizeMode="stretch" fadeDuration={0} />
+      <View style={styles.backgroundShade} />
 
-      <View style={styles.centerPanel}>
+      <View style={[styles.centerPanel, { marginTop: Math.max(46, Math.round(viewportHeight * 0.18)) }]}>
         <View style={styles.logoWrap}>
           <Animated.View style={[styles.logoHalo, { opacity: haloOpacity, transform: [{ scale: haloScale }] }]} />
           <Image
@@ -97,12 +108,14 @@ export default function LoadingScreen({ navigation }) {
           />
         </View>
 
-        <View style={styles.barTrack}>
-          <Animated.View style={[styles.barFill, { width: barWidth }]} />
-          <Animated.View style={[styles.barShimmer, { transform: [{ translateX: shimmerTranslate }] }]} />
+        <View style={styles.loadingStatus}>
+          <Text style={styles.connectingText}>{t("loading.preparing", "Conectando\nBolivia siempre")}</Text>
+          <View style={styles.barTrack}>
+            <Animated.View style={[styles.barFill, { width: barWidth }]} />
+            <Animated.View style={[styles.barShimmer, { transform: [{ translateX: shimmerTranslate }] }]} />
+          </View>
+          <Text style={styles.caption}>{t("common.loading", "Cargando...")}</Text>
         </View>
-
-        <Text style={styles.caption}>{t("loading.preparing", "Preparando tu seguimiento")}</Text>
       </View>
     </View>
   );
@@ -112,10 +125,18 @@ const createStyles = (t) =>
   StyleSheet.create({
     root: {
       flex: 1,
-      backgroundColor: t.colors.bg,
+      backgroundColor: "#FECC36",
+      overflow: "hidden",
       alignItems: "center",
-      justifyContent: "center",
+      justifyContent: "flex-start",
       paddingHorizontal: t.spacing.xl,
+    },
+    backgroundImage: {
+      position: "absolute",
+    },
+    backgroundShade: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: "rgba(255, 255, 255, 0.08)",
     },
     topAccent: {
       position: "absolute",
@@ -155,22 +176,17 @@ const createStyles = (t) =>
     centerPanel: {
       width: "100%",
       maxWidth: 430,
-      borderRadius: 24,
-      paddingHorizontal: 24,
-      paddingVertical: 26,
-      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.78)" : "rgba(255,255,255,0.86)",
-      borderWidth: 1,
-      borderColor: t.colors.border,
-      borderTopWidth: 2,
-      borderTopColor: t.colors.primary,
+      paddingHorizontal: 16,
+      paddingVertical: 18,
+      backgroundColor: "transparent",
+      borderWidth: 0,
       alignItems: "center",
-      ...t.shadowStrong,
     },
     logoWrap: {
       width: "100%",
       alignItems: "center",
       justifyContent: "center",
-      marginBottom: t.spacing.md,
+      marginBottom: t.spacing.sm,
       position: "relative",
     },
     logoHalo: {
@@ -181,22 +197,26 @@ const createStyles = (t) =>
       backgroundColor: `${t.colors.primary}33`,
     },
     logoImage: {
-      width: "88%",
-      height: 132,
+      width: "96%",
+      height: 148,
+    },
+    loadingStatus: {
+      width: "78%",
+      maxWidth: 268,
+      marginTop: 2,
+      alignItems: "center",
     },
     barTrack: {
       width: "100%",
-      height: 9,
+      height: 7,
       borderRadius: 999,
-      backgroundColor: t.isDark ? "rgba(51, 65, 85, 0.7)" : "#F3E8BF",
+      backgroundColor: "rgba(255,255,255,0.62)",
       overflow: "hidden",
-      marginTop: t.spacing.md,
-      borderWidth: 1,
-      borderColor: t.colors.border,
+      marginTop: 9,
     },
     barFill: {
       height: "100%",
-      backgroundColor: t.colors.primary,
+      backgroundColor: "#0F3F7B",
       borderRadius: 999,
     },
     barShimmer: {
@@ -206,13 +226,26 @@ const createStyles = (t) =>
       width: 96,
       height: "100%",
       borderRadius: 999,
-      backgroundColor: t.isDark ? "rgba(255,255,255,0.14)" : "rgba(255,255,255,0.56)",
+      backgroundColor: "rgba(255,255,255,0.45)",
     },
     caption: {
       ...t.typography.p,
-      marginTop: t.spacing.sm,
-      color: t.colors.muted,
-      fontWeight: "700",
+      marginTop: 10,
+      color: "#0F3F7B",
+      fontSize: 12,
+      fontWeight: "900",
+      fontStyle: "italic",
+      letterSpacing: 0.15,
+      textAlign: "center",
+    },
+    connectingText: {
+      marginBottom: 0,
+      color: "#0F3F7B",
+      fontSize: 15,
+      lineHeight: 18,
+      fontWeight: "900",
+      fontStyle: "italic",
+      letterSpacing: 0.15,
       textAlign: "center",
     },
   });

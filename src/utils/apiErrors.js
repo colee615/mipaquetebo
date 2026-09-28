@@ -5,6 +5,7 @@ export const getLocalizedApiErrorMessage = (t, error, overrides = {}) =>
     config: t("api.config", "API configuration is incomplete"),
     timeout: t("api.timeout", "The request took too long, please try again"),
     network: t("api.network", "Could not connect to the server"),
+    rateLimit: t("api.rateLimit", "Too many requests. Please try again in a few seconds"),
     invalidCode: t("api.invalidCode", "Invalid or not found code"),
     auth: t("api.auth", "Invalid API credentials"),
     server: t("api.server", "The server encountered a problem"),

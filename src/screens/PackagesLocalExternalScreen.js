@@ -12,7 +12,6 @@ import { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } from "../components/ui";
@@ -26,7 +25,6 @@ export default function DeliveredPackagesScreen({ navigation }) {
   const { t, language } = useI18n();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors, typography } = theme;
-  const insets = useSafeAreaInsets();
 
   const [packages, setPackages] = useState([]);
   const [eventsData, setEventsData] = useState({});
@@ -81,8 +79,10 @@ export default function DeliveredPackagesScreen({ navigation }) {
               lastEvent: null,
               fullData: { filtro: { codigo: p.code }, resultado: [] },
               counts: { locales: 0, externos: 0 },
-              error: e?.message || "Error desconocido",
+              error: apiErrorText(e),
             };
+            // Keep the saved item visible and explain why its status is unavailable.
+            onlyWithBoth.push(p);
           }
         })
       );
@@ -222,6 +222,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
             </View>
 
             {last ? <Text style={styles.lastEvent}>{formatPackageEventSummary(last, t, language, "delivered.noRecentUpdates")}</Text> : null}
+            {meta?.error ? <Text style={styles.errorText}>{meta.error}</Text> : null}
 
             <View style={[styles.rowWrap, { marginTop: 6, justifyContent: "flex-end" }]}>
               <TouchableOpacity
@@ -249,7 +250,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
   );
 
   return (
-    <Screen>
+    <Screen edges={["left", "right"]}>
       <View style={styles.container}>
         <Card style={styles.searchCard}>
           <AppInput icon="search" placeholder={t("saved.searchPlaceholder", "Buscar por nombre o código...")} value={query} onChangeText={setQuery} />
@@ -278,7 +279,7 @@ export default function DeliveredPackagesScreen({ navigation }) {
             flexGrow: 1,
             paddingHorizontal: theme.spacing.lg,
             paddingTop: 2,
-            paddingBottom: 80 + insets.bottom,
+            paddingBottom: theme.spacing.lg,
           }}
           keyboardShouldPersistTaps="always"
         />
@@ -329,6 +330,7 @@ const createStyles = (t) =>
     name: { fontWeight: "900", fontSize: 15, color: t.colors.text },
     code: { marginTop: 3, fontSize: 12, color: t.colors.muted, fontWeight: "700" },
     lastEvent: { marginTop: 4, color: t.colors.text, opacity: 0.8, fontWeight: "700" },
+    errorText: { marginTop: 6, color: t.colors.danger, fontWeight: "800" },
 
     iconPill: {
       width: 38,

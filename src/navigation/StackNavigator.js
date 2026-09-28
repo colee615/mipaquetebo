@@ -1,7 +1,7 @@
 ﻿import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { useTheme } from "../theme/ui";
 import { Ionicons } from "@expo/vector-icons";
-import { TouchableOpacity, View, Text } from "react-native";
+import { TouchableOpacity, View, Text, Image } from "react-native";
 import { useI18n } from "../i18n/ui";
 
 import LoadingScreen from "../screens/LoadingScreen";
@@ -16,6 +16,22 @@ export default function StackNavigator() {
   const { colors, mode, setMode, isDark } = useTheme();
   const { t, language, setLanguage } = useI18n();
   const headerTextColor = isDark ? colors.text : colors.secondary;
+  const renderHeaderLogo = () => (
+    <View
+      style={{
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 8,
+        backgroundColor: colors.primary,
+      }}
+    >
+      <Image
+        source={require("../../assets/logoincio-transparent.png")}
+        style={{ width: 104, height: 28 }}
+        resizeMode="contain"
+      />
+    </View>
+  );
 
   return (
     <Stack.Navigator
@@ -81,17 +97,24 @@ export default function StackNavigator() {
       })}
     >
       <Stack.Screen name="Loading" component={LoadingScreen} options={{ headerShown: false }} />
-      <Stack.Screen name="Scan" component={ScanScreen} options={{ title: t("nav.scan", "Buscar envío") }} />
+      <Stack.Screen
+        name="Scan"
+        component={ScanScreen}
+        options={{
+          title: t("nav.scan", "Buscar envío"),
+          headerTitle: renderHeaderLogo,
+        }}
+      />
       <Stack.Screen name="Result" component={ResultScreen} options={{ title: t("nav.result", "Resultado") }} />
       <Stack.Screen
         name="SavedPackages"
         component={SavedPackagesScreen}
-        options={{ title: t("nav.pending", "Pendientes") }}
+        options={{ title: t("nav.pending", "Pendientes"), headerTitle: renderHeaderLogo }}
       />
       <Stack.Screen
         name="PackagesLocalExternal"
         component={PackagesLocalExternalScreen}
-        options={{ title: t("nav.delivered", "Entregados") }}
+        options={{ title: t("nav.delivered", "Entregados"), headerTitle: renderHeaderLogo }}
       />
     </Stack.Navigator>
   );

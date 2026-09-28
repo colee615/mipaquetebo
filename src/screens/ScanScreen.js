@@ -1,4 +1,4 @@
-﻿import { View, Text, Modal, StyleSheet, BackHandler, Alert, ScrollView, ActivityIndicator, TouchableOpacity, Animated, Easing, Dimensions, KeyboardAvoidingView, Platform } from "react-native";
+import { View, Text, Modal, StyleSheet, BackHandler, Alert, ScrollView, ActivityIndicator, TouchableOpacity, Pressable, Animated, Easing, Dimensions, KeyboardAvoidingView, Platform, Linking } from "react-native";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -10,7 +10,7 @@ import { useI18n } from "../i18n/ui";
 import { Screen, Card, PrimaryButton, OutlineButton, AppInput, Snackbar, Chip } from "../components/ui";
 import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
-import { validateTrackingCode } from "../utils/tracking";
+import { normalizeTrackingCodeInput, validateTrackingCode } from "../utils/tracking";
 import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
 import { useGuideProgress } from "../hooks/useGuideProgress";
 
@@ -29,6 +29,7 @@ export default function ScanScreen({ navigation }) {
   const [savingPackage, setSavingPackage] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [officialInfoVisible, setOfficialInfoVisible] = useState(false);
   const [packageName, setPackageName] = useState("");
   const [lastScannedCode, setLastScannedCode] = useState("");
   const [guideVisible, setGuideVisible] = useState(false);
@@ -42,18 +43,15 @@ export default function ScanScreen({ navigation }) {
   const apiErrorText = (error, overrides = {}) => getLocalizedApiErrorMessage(t, error, overrides);
   const [debugToken, setDebugToken] = useState("");
   const [subscribeStatus, setSubscribeStatus] = useState("");
-  const [keyboardHeight, setKeyboardHeight] = useState(0);
-  const [inputFocused, setInputFocused] = useState(false);
   const arrowAnim = useRef(new Animated.Value(0)).current;
   const scrollRef = useRef(null);
-  const scrollYRef = useRef(0);
-  const codeInputRef = useRef(null);
   const guideMeasureTimer = useRef(null);
   const guideMeasureSeq = useRef(0);
   const heroRef = useRef(null);
   const scanCardRef = useRef(null);
   const inputCardRef = useRef(null);
-  const savedBtnRef = useRef(null);
+  const OFFICIAL_SITE_URL = "https://correos.gob.bo/";
+  const OFFICIAL_TRACKING_URL = "https://trackingbo.correos.gob.bo:8100/";
 
   const ENABLE_SUBSCRIBE = true;
   const GUIDE_KEY = "scan_onboarding_seen_v1";
@@ -76,11 +74,6 @@ export default function ScanScreen({ navigation }) {
         title: t("scan.guide.input.title", "Enter code"),
         text: t("scan.guide.input.body", "You can also type the code manually and search."),
         target: "input",
-      },
-      {
-        title: t("scan.guide.saved.title", "Saved packages"),
-        text: t("scan.guide.saved.body", "Here you can see your saved packages and updates."),
-        target: "saved",
       },
     ],
     [t]
@@ -167,11 +160,10 @@ export default function ScanScreen({ navigation }) {
   const measureGuideAnchors = async () => {
     const seq = guideMeasureSeq.current + 1;
     guideMeasureSeq.current = seq;
-    const [hero, scan, input, saved] = await Promise.all([
+    const [hero, scan, input] = await Promise.all([
       measureOne(heroRef),
       measureOne(scanCardRef),
       measureOne(inputCardRef),
-      measureOne(savedBtnRef),
     ]);
 
     // Ignore stale async measurements from previous scroll/step positions.
@@ -181,7 +173,6 @@ export default function ScanScreen({ navigation }) {
       hero: shiftAnchorDown(hero),
       scan: shiftAnchorDown(scan),
       input: shiftAnchorDown(input),
-      saved: shiftAnchorDown(saved),
     });
   };
 
@@ -212,6 +203,7 @@ export default function ScanScreen({ navigation }) {
 
   const closeGuide = async () => {
     setGuideVisible(false);
+    scrollRef.current?.scrollTo({ y: 0, animated: true });
     await completeGuide();
   };
 
@@ -257,6 +249,11 @@ export default function ScanScreen({ navigation }) {
     setModalVisible(true);
   };
 
+  const closeSaveModal = () => {
+    Keyboard.dismiss();
+    setModalVisible(false);
+  };
+
   const consultarAPI = async (code) => {
     const validated = validateTrackingCode(code);
     if (!validated.ok) {
@@ -269,9 +266,14 @@ export default function ScanScreen({ navigation }) {
 
     setLastScannedCode(value);
 
-    if (await isSaved(value)) {
-      setCodigo("");
-      return fetchResult(value);
+    try {
+      if (await isSaved(value)) {
+        setCodigo("");
+        return fetchResult(value);
+      }
+    } catch (storageError) {
+      showSnack(t("scan.storageError", "Saved packages could not be read"), "danger");
+      return;
     }
 
     setLoading(true);
@@ -281,7 +283,12 @@ export default function ScanScreen({ navigation }) {
 
       // Some API responses omit `existe_paquete`; treat it as not-found only when explicitly false.
       if (data?.existe_paquete === false) {
-        return showSnack(t("scan.packageNotFound", "Package not found"), "danger");
+        return showSnack(
+          typeof data?.message === "string" && data.message.trim()
+            ? data.message.trim()
+            : t("scan.packageNotFound", "Package not found"),
+          "danger"
+        );
       }
 
       setCodigo("");
@@ -338,7 +345,7 @@ export default function ScanScreen({ navigation }) {
       // Show global transition loader immediately after validation.
       setLoadingText(t("scan.redirecting", "Redirigiendo a eventos..."));
       setLoading(true);
-      setModalVisible(false);
+      closeSaveModal();
 
       if (!list.some((p) => p.code === lastScannedCode)) {
         list.push({ code: lastScannedCode, name });
@@ -373,41 +380,11 @@ export default function ScanScreen({ navigation }) {
 
   const justViewEvents = () => {
     if (savingPackage) return;
-    setModalVisible(false);
+    closeSaveModal();
     fetchResult(lastScannedCode, { loadingText: t("scan.redirecting", "Redirigiendo a eventos...") });
   };
 
-  const ensureInputVisible = () => {
-    const node = codeInputRef.current;
-    if (!node || typeof node.measureInWindow !== "function") return;
-    node.measureInWindow((x, y, width, height) => {
-      const win = Dimensions.get("window");
-      const inputBottom = y + height;
-      const visibleBottom = win.height - Math.max(0, keyboardHeight) - 16;
-      if (inputBottom <= visibleBottom) return;
-      const delta = inputBottom - visibleBottom + 24;
-      if (scrollRef.current?.scrollTo) {
-        scrollRef.current.scrollTo({ y: Math.max(0, scrollYRef.current + delta), animated: true });
-      }
-    });
-  };
-
-  const focusInputCard = () => {
-    setInputFocused(true);
-    const y = guideOffsets.input;
-    if (typeof y === "number" && scrollRef.current?.scrollTo) {
-      const scrollToInput = () => scrollRef.current.scrollTo({ y: Math.max(0, y - 140), animated: true });
-      setTimeout(scrollToInput, 80);
-      setTimeout(scrollToInput, 260);
-    }
-    setTimeout(() => {
-      ensureInputVisible();
-    }, 120);
-  };
-
-  const onMainScroll = (e) => {
-    const y = e?.nativeEvent?.contentOffset?.y;
-    if (typeof y === "number") scrollYRef.current = y;
+  const onMainScroll = () => {
     if (!guideVisible) return;
     if (guideMeasureTimer.current) clearTimeout(guideMeasureTimer.current);
     guideMeasureTimer.current = setTimeout(() => {
@@ -415,8 +392,76 @@ export default function ScanScreen({ navigation }) {
     }, 60);
   };
 
+  const openExternalLink = async (url) => {
+    try {
+      const supported = await Linking.canOpenURL(url);
+      if (!supported) {
+        showSnack(t("common.openLinkError", "No se pudo abrir el enlace"), "danger");
+        return;
+      }
+      await Linking.openURL(url);
+    } catch {
+      showSnack(t("common.openLinkError", "No se pudo abrir el enlace"), "danger");
+    }
+  };
+
+  const renderOfficialInfo = () => (
+    <View style={[styles.officialBubble, styles.officialModalBubble]}>
+      <View style={styles.officialBubbleTail} />
+      <View style={styles.officialHeader}>
+        <View style={styles.officialIconBubble}>
+          <Ionicons name="shield-checkmark" size={19} color={colors.secondary} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.officialTitle}>{t("scan.officialInfo.title", "Fuente oficial de consulta")}</Text>
+          <Text style={styles.officialKicker}>{t("scan.officialInfo.kicker", "Información verificada")}</Text>
+        </View>
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={t("common.close", "Cerrar")}
+          style={styles.officialClose}
+          onPress={() => setOfficialInfoVisible(false)}
+          hitSlop={10}
+        >
+          <Ionicons name="close" size={20} color={colors.muted} />
+        </TouchableOpacity>
+      </View>
+      <Text style={styles.officialBody}>
+        {t("scan.officialInfo.body", "La informacion mostrada en esta app proviene de los sistemas de seguimiento publicados por Correos de Bolivia.")}
+      </Text>
+      <View style={styles.officialLinks}>
+        <TouchableOpacity style={styles.officialLink} onPress={() => openExternalLink(OFFICIAL_SITE_URL)} activeOpacity={0.82}>
+          <View style={styles.officialLinkIcon}>
+            <Ionicons name="globe-outline" size={17} color={colors.secondary} />
+          </View>
+          <View style={styles.officialLinkCopy}>
+            <Text style={styles.officialLinkLabel}>{t("scan.officialInfo.sourceLabel", "Sitio oficial")}</Text>
+            <Text style={styles.officialLinkUrl} numberOfLines={1}>{t("scan.officialInfo.sourceValue", OFFICIAL_SITE_URL)}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={17} color={colors.muted} />
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.officialLink} onPress={() => openExternalLink(OFFICIAL_TRACKING_URL)} activeOpacity={0.82}>
+          <View style={styles.officialLinkIcon}>
+            <Ionicons name="navigate-outline" size={17} color={colors.secondary} />
+          </View>
+          <View style={styles.officialLinkCopy}>
+            <Text style={styles.officialLinkLabel}>{t("scan.officialInfo.trackingLabel", "Seguimiento oficial")}</Text>
+            <Text style={styles.officialLinkUrl} numberOfLines={1}>{t("scan.officialInfo.trackingValue", OFFICIAL_TRACKING_URL)}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={17} color={colors.muted} />
+        </TouchableOpacity>
+      </View>
+      <View style={styles.officialDisclaimer}>
+        <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
+        <Text style={styles.officialDisclaimerText}>
+          {t("scan.officialInfo.disclaimer", "Esta app no representa a una entidad gubernamental distinta de la fuente indicada y solo muestra informacion consultada desde los canales oficiales enlazados.")}
+        </Text>
+      </View>
+    </View>
+  );
+
   return (
-    <Screen>
+    <Screen edges={["left", "right"]}>
       {scanActive ? (
         <View style={{ flex: 1 }}>
           <CameraView
@@ -448,18 +493,19 @@ export default function ScanScreen({ navigation }) {
       ) : (
         <KeyboardAvoidingView
           style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-          keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 72}
+          behavior={Platform.OS === "ios" ? "padding" : undefined}
+          keyboardVerticalOffset={Platform.OS === "ios" ? 90 : 0}
         >
         <ScrollView
           ref={scrollRef}
+          style={styles.mainScroll}
           onScroll={onMainScroll}
           scrollEventThrottle={16}
           contentContainerStyle={[
             styles.container,
             {
               paddingTop: theme.spacing.lg,
-              paddingBottom: theme.spacing.xl + insets.bottom + Math.max(0, keyboardHeight + 36),
+              paddingBottom: theme.spacing.xl,
               flexGrow: 1,
             },
           ]}
@@ -468,17 +514,54 @@ export default function ScanScreen({ navigation }) {
           keyboardDismissMode="on-drag"
         >
           <View ref={heroRef} collapsable={false} onLayout={captureGuideOffset("hero")} style={styles.hero}>
-            <Text style={styles.heroKicker}>TRACKINGBO APP</Text>
+            <View style={styles.heroTopRow}>
+              <Text style={styles.heroKicker}>TRACKINGBO APP</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel={t("scan.officialInfo.title", "Fuente oficial de consulta")}
+                style={styles.heroInfoButton}
+                onPress={() => setOfficialInfoVisible(true)}
+                activeOpacity={0.82}
+                hitSlop={8}
+              >
+                <Ionicons name="information-circle-outline" size={21} color={colors.secondary} />
+              </TouchableOpacity>
+            </View>
             <Text style={styles.title}>{t("scan.title", "Rastreo de envíos")}</Text>
+            <View style={styles.titleUnderline} />
             <Text style={styles.subtitle}>{t("scan.subtitle", "Consulta con el código o escanea con la cámara.")}</Text>
             <View style={styles.heroRow}>
-              <Chip text={t("scan.heroPostal", "Bolivia Post")} color={colors.primary} icon="business-outline" />
-              <Chip text={t("scan.heroSecure", "Secure delivery")} color={colors.secondary} icon="shield-checkmark-outline" />
+              <Chip
+                text={t("scan.heroPostal", "Correos de Bolivia")}
+                color={colors.secondary}
+                icon="business-outline"
+                style={styles.heroChipPostal}
+                textStyle={styles.heroChipText}
+              />
+              <Chip
+                text={t("scan.heroSecure", "Entrega segura")}
+                color={colors.secondary}
+                icon="shield-checkmark-outline"
+                style={styles.heroChipSecure}
+                textStyle={styles.heroChipText}
+              />
             </View>
           </View>
 
           <View ref={scanCardRef} collapsable={false} onLayout={captureGuideOffset("scan")}>
             <Card style={styles.scanCard}>
+              <View style={styles.sectionIconRow}>
+                <View style={styles.sectionIconBubble}>
+                  <Ionicons name="scan-outline" size={24} color={colors.secondaryDark} />
+                </View>
+                <Chip
+                  text={t("scan.quick", "Rápido")}
+                  color={colors.primaryDark}
+                  icon="flash"
+                  style={styles.quickChip}
+                  textStyle={styles.quickChipText}
+                />
+              </View>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>{t("scan.scan", "Escanear")}</Text>
                 <Text style={styles.sectionDesc}>{t("scan.scanDesc", "La forma más rápida y segura")}</Text>
@@ -489,12 +572,19 @@ export default function ScanScreen({ navigation }) {
 
           <View style={styles.orRow}>
             <View style={styles.orLine} />
-            <Text style={styles.orText}>{t("scan.or", "or")}</Text>
+            <View style={styles.orBadge}>
+              <Text style={styles.orText}>{t("scan.or", "o")}</Text>
+            </View>
             <View style={styles.orLine} />
           </View>
 
           <View ref={inputCardRef} collapsable={false} onLayout={captureGuideOffset("input")}>
             <Card style={styles.inputCard}>
+              <View style={styles.sectionIconRow}>
+                <View style={styles.sectionIconBubble}>
+                  <Ionicons name="barcode-outline" size={24} color={colors.secondaryDark} />
+                </View>
+              </View>
               <View style={styles.sectionHeader}>
                 <Text style={styles.sectionTitle}>{t("scan.enterCode", "Ingresar código")}</Text>
                 <Text style={styles.sectionDesc}>{t("scan.enterCodeDesc", "Ingresa tu código de rastreo")}</Text>
@@ -504,11 +594,9 @@ export default function ScanScreen({ navigation }) {
                 icon="barcode-outline"
                 placeholder={t("scan.enterCodePlaceholder", "Ingresa tu código")}
                 value={codigo}
-                onChangeText={setCodigo}
+                onChangeText={(value) => setCodigo(normalizeTrackingCodeInput(value))}
                 autoCapitalize="characters"
-                inputRef={codeInputRef}
-                onFocus={focusInputCard}
-                onBlur={() => setInputFocused(false)}
+                maxLength={50}
                 returnKeyType="search"
                 onSubmitEditing={() => consultarAPI(codigo)}
               />
@@ -522,15 +610,63 @@ export default function ScanScreen({ navigation }) {
             </Card>
           </View>
 
-          <View ref={savedBtnRef} collapsable={false} onLayout={captureGuideOffset("saved")}>
-          <OutlineButton
-            title={t("scan.viewSaved", "Ver guardados")}
-            icon="bookmark"
-            iconColor={colors.secondary}
-            style={styles.bottomButton}
-            onPress={() => navigation.navigate("SavedPackages")}
-          />
-          </View>
+          {false ? <View style={styles.officialBubble}>
+            <View style={styles.officialBubbleTail} />
+            <View style={styles.officialHeader}>
+              <View style={styles.officialIconBubble}>
+                <Ionicons name="shield-checkmark" size={19} color={colors.secondary} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.officialTitle}>{t("scan.officialInfo.title", "Fuente oficial de consulta")}</Text>
+                <Text style={styles.officialKicker}>{t("scan.officialInfo.kicker", "Información verificada")}</Text>
+              </View>
+            </View>
+            <Text style={styles.officialBody}>
+              {t("scan.officialInfo.body", "La informacion mostrada en esta app proviene de los sistemas de seguimiento publicados por Correos de Bolivia.")}
+            </Text>
+            <View style={styles.officialLinks}>
+              <TouchableOpacity style={styles.officialLink} onPress={() => openExternalLink(OFFICIAL_SITE_URL)} activeOpacity={0.82}>
+                <View style={styles.officialLinkIcon}>
+                  <Ionicons name="globe-outline" size={17} color={colors.secondary} />
+                </View>
+                <View style={styles.officialLinkCopy}>
+                  <Text style={styles.officialLinkLabel}>{t("scan.officialInfo.sourceLabel", "Sitio oficial")}</Text>
+                  <Text style={styles.officialLinkUrl} numberOfLines={1}>{t("scan.officialInfo.sourceValue", OFFICIAL_SITE_URL)}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={colors.muted} />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.officialLink} onPress={() => openExternalLink(OFFICIAL_TRACKING_URL)} activeOpacity={0.82}>
+                <View style={styles.officialLinkIcon}>
+                  <Ionicons name="navigate-outline" size={17} color={colors.secondary} />
+                </View>
+                <View style={styles.officialLinkCopy}>
+                  <Text style={styles.officialLinkLabel}>{t("scan.officialInfo.trackingLabel", "Seguimiento oficial")}</Text>
+                  <Text style={styles.officialLinkUrl} numberOfLines={1}>{t("scan.officialInfo.trackingValue", OFFICIAL_TRACKING_URL)}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={17} color={colors.muted} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.officialDisclaimer}>
+              <Ionicons name="information-circle-outline" size={14} color={colors.muted} />
+              <Text style={styles.officialDisclaimerText}>
+                {t("scan.officialInfo.disclaimer", "Esta app no representa a una entidad gubernamental distinta de la fuente indicada y solo muestra informacion consultada desde los canales oficiales enlazados.")}
+              </Text>
+            </View>
+            <View style={styles.officialActions}>
+              <OutlineButton
+                title={t("scan.officialInfo.openSource", "Abrir fuente oficial")}
+                icon="open-outline"
+                style={styles.officialAction}
+                onPress={() => openExternalLink(OFFICIAL_SITE_URL)}
+              />
+              <OutlineButton
+                title={t("scan.officialInfo.openTracking", "Abrir seguimiento oficial")}
+                icon="globe-outline"
+                style={styles.officialAction}
+                onPress={() => openExternalLink(OFFICIAL_TRACKING_URL)}
+              />
+            </View>
+          </View> : null}
 
           {__DEV__ && !!debugToken && (
             <View style={styles.debugBox}>
@@ -550,55 +686,104 @@ export default function ScanScreen({ navigation }) {
         </KeyboardAvoidingView>
       )}
 
-      <Modal visible={modalVisible} transparent animationType="fade" onRequestClose={() => setModalVisible(false)}>
-        <KeyboardAvoidingView
-          style={{ flex: 1 }}
-          behavior={Platform.OS === "ios" ? "padding" : "height"}
-        >
-          <View style={styles.modalOverlay}>
-            <Card style={{ width: "92%", maxWidth: 420 }}>
-              <Text style={typography.h2}>{t("scan.modal.addName", "Add name")}</Text>
-              <Text style={[typography.p, { marginTop: 6, marginBottom: 10 }]}>
-                {t("scan.modal.code", "Code")}: <Text style={{ fontWeight: "900" }}>{lastScannedCode}</Text>
-              </Text>
+      <Modal
+        visible={modalVisible}
+        transparent
+        animationType={Platform.OS === "ios" ? "fade" : "none"}
+        hardwareAccelerated={Platform.OS === "android"}
+        statusBarTranslucent={Platform.OS === "android"}
+        navigationBarTranslucent={Platform.OS === "android"}
+        presentationStyle="overFullScreen"
+        onRequestClose={closeSaveModal}
+      >
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboardArea}
+            behavior={Platform.OS === "ios" ? "padding" : undefined}
+          >
+            <ScrollView
+              style={styles.modalScroll}
+              contentContainerStyle={[
+                styles.modalScrollContent,
+                { paddingTop: 20 + insets.top, paddingBottom: 20 + insets.bottom },
+              ]}
+              keyboardShouldPersistTaps="handled"
+              keyboardDismissMode="on-drag"
+              showsVerticalScrollIndicator={false}
+              removeClippedSubviews={false}
+            >
+              <View collapsable={false} renderToHardwareTextureAndroid={Platform.OS === "android"}>
+                <Card style={styles.saveModalCard}>
+                  <Text style={typography.h2}>{t("scan.modal.addName", "Add name")}</Text>
+                  <Text style={[typography.p, { marginTop: 6, marginBottom: 10 }]}>
+                    {t("scan.modal.code", "Code")}: <Text style={{ fontWeight: "900" }}>{lastScannedCode}</Text>
+                  </Text>
 
-              <View style={{ marginBottom: 12 }}>
-                <Chip text={t("scan.modal.events", "Tracking events")} color={colors.primary} icon="trail-sign-outline" />
+                  <View style={{ marginBottom: 12 }}>
+                    <Chip text={t("scan.modal.events", "Tracking events")} color={colors.primary} icon="trail-sign-outline" />
+                  </View>
+
+                  <AppInput
+                    icon="create-outline"
+                    placeholder={t("scan.modal.namePlaceholder", "e.g. Package- Earbuds")}
+                    value={packageName}
+                    onChangeText={setPackageName}
+                    returnKeyType="done"
+                    editable={!savingPackage}
+                  />
+
+                  <PrimaryButton
+                    title={t("scan.modal.saveAndView", "Save and view events")}
+                    icon="save"
+                    onPress={savePackage}
+                  />
+                  <OutlineButton
+                    title={t("scan.modal.viewOnly", "View events only")}
+                    icon="eye"
+                    onPress={() => {
+                      if (savingPackage) return;
+                      justViewEvents();
+                    }}
+                  />
+                  <OutlineButton
+                    title={t("common.cancel", "Cancel")}
+                    icon="close"
+                    onPress={() => {
+                      if (savingPackage) return;
+                      closeSaveModal();
+                    }}
+                  />
+                </Card>
               </View>
+            </ScrollView>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
-              <AppInput
-                icon="create-outline"
-                placeholder={t("scan.modal.namePlaceholder", "e.g. Package- Earbuds")}
-                value={packageName}
-                onChangeText={setPackageName}
-                returnKeyType="done"
-                editable={!savingPackage}
-              />
-
-              <PrimaryButton
-                title={t("scan.modal.saveAndView", "Save and view events")}
-                icon="save"
-                onPress={savePackage}
-              />
-              <OutlineButton
-                title={t("scan.modal.viewOnly", "View events only")}
-                icon="eye"
-                onPress={() => {
-                  if (savingPackage) return;
-                  justViewEvents();
-                }}
-              />
-              <OutlineButton
-                title={t("common.cancel", "Cancel")}
-                icon="close"
-                onPress={() => {
-                  if (savingPackage) return;
-                  setModalVisible(false);
-                }}
-              />
-            </Card>
-          </View>
-        </KeyboardAvoidingView>
+      <Modal
+        visible={officialInfoVisible}
+        transparent
+        animationType="fade"
+        statusBarTranslucent={Platform.OS === "android"}
+        presentationStyle="overFullScreen"
+        onRequestClose={() => setOfficialInfoVisible(false)}
+      >
+        <View style={styles.officialModalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            accessibilityLabel={t("common.close", "Cerrar")}
+            onPress={() => setOfficialInfoVisible(false)}
+          />
+          <ScrollView
+            style={styles.officialModalScroll}
+            contentContainerStyle={styles.officialModalScrollContent}
+            showsVerticalScrollIndicator={false}
+            bounces
+            keyboardShouldPersistTaps="handled"
+          >
+            {renderOfficialInfo()}
+          </ScrollView>
+        </View>
       </Modal>
 
       <Modal visible={guideVisible} transparent animationType="fade" onRequestClose={closeGuide}>
@@ -779,12 +964,21 @@ const createStyles = (t) =>
   StyleSheet.create({
     container: {
       flexGrow: 1,
-      paddingHorizontal: t.spacing.xl,
+      paddingHorizontal: 24,
       paddingBottom: t.spacing.xl,
+    },
+    mainScroll: {
+      flex: 1,
     },
     hero: {
       marginBottom: t.spacing.lg,
       paddingVertical: 4,
+    },
+    heroTopRow: {
+      minHeight: 28,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
     },
     heroKicker: {
       fontSize: 11,
@@ -793,47 +987,129 @@ const createStyles = (t) =>
       color: t.colors.muted,
       marginBottom: 4,
     },
+    heroInfoButton: {
+      width: 34,
+      height: 34,
+      marginBottom: 4,
+      borderRadius: 17,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.14)" : "rgba(255,255,255,0.72)",
+      borderWidth: 1,
+      borderColor: `${t.colors.primary}66`,
+    },
     title: {
       ...t.typography.h1,
       fontSize: 30,
-      color: "#0F3F7B",
+      marginTop: -4,
+      color: t.colors.secondaryDark,
+      lineHeight: 34,
+    },
+    titleUnderline: {
+      width: 42,
+      height: 4,
+      marginTop: 4,
+      borderRadius: 4,
+      backgroundColor: t.colors.primary,
     },
     subtitle: {
       ...t.typography.p,
       marginTop: 6,
       maxWidth: 360,
-      color: "#5D7596",
+      color: t.isDark ? t.colors.muted : "#1F2937",
     },
     heroRow: {
       marginTop: t.spacing.sm,
       flexDirection: "row",
-      gap: 8,
+      gap: 6,
       flexWrap: "wrap",
+    },
+    heroChipPostal: {
+      flex: 1,
+      minWidth: 0,
+      justifyContent: "center",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: t.isDark ? "rgba(254, 204, 54, 0.2)" : "#FFF0B0",
+      borderColor: t.isDark ? "rgba(254, 204, 54, 0.4)" : "#FFE080",
+    },
+    heroChipSecure: {
+      flex: 1,
+      minWidth: 0,
+      justifyContent: "center",
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      backgroundColor: t.isDark ? "rgba(87, 139, 211, 0.22)" : "#E7F0FF",
+      borderColor: t.isDark ? "rgba(87, 139, 211, 0.42)" : "#D0E1FA",
+    },
+    heroChipText: {
+      fontSize: 11,
+      lineHeight: 14,
+      fontWeight: "600",
+      textTransform: "uppercase",
+      letterSpacing: 0.15,
     },
     scanCard: {
       marginBottom: t.spacing.md,
-      backgroundColor: "rgba(255,255,255,0.82)",
-      borderColor: "rgba(160, 186, 218, 0.65)",
+      padding: 16,
+      borderRadius: 22,
+      backgroundColor: t.isDark ? "rgba(23, 33, 51, 0.94)" : "rgba(255,255,255,0.94)",
+      borderColor: t.isDark ? t.colors.border : "rgba(218, 229, 244, 0.9)",
       borderTopWidth: 1,
     },
     inputCard: {
       marginTop: t.spacing.sm,
-      backgroundColor: "rgba(255,255,255,0.82)",
-      borderColor: "rgba(160, 186, 218, 0.65)",
+      padding: 16,
+      borderRadius: 22,
+      backgroundColor: t.isDark ? "rgba(23, 33, 51, 0.94)" : "rgba(255,255,255,0.94)",
+      borderColor: t.isDark ? t.colors.border : "rgba(218, 229, 244, 0.9)",
       borderTopWidth: 1,
     },
+    sectionIconRow: {
+      minHeight: 38,
+      position: "absolute",
+      top: 16,
+      left: 16,
+      right: 16,
+      zIndex: 2,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      marginBottom: 8,
+    },
+    sectionIconBubble: {
+      width: 40,
+      height: 40,
+      borderRadius: 20,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: t.isDark ? "rgba(67, 114, 190, 0.28)" : "#EAF2FF",
+      borderWidth: 1,
+      borderColor: t.isDark ? "rgba(110, 160, 232, 0.4)" : "#D8E7FB",
+    },
+    quickChip: {
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    quickChipText: {
+      fontSize: 9,
+      letterSpacing: 0.2,
+    },
     sectionHeader: {
+      minHeight: 40,
+      marginLeft: 52,
       marginBottom: t.spacing.sm,
+      justifyContent: "center",
     },
     sectionTitle: {
       fontSize: 17,
       fontWeight: "900",
-      color: "#122F54",
+      color: t.colors.secondaryDark,
       letterSpacing: 0.1,
     },
     sectionDesc: {
       marginTop: 4,
-      color: "#5D7596",
+      color: t.colors.muted,
       fontWeight: "700",
     },
     orRow: {
@@ -841,6 +1117,16 @@ const createStyles = (t) =>
       alignItems: "center",
       gap: 10,
       marginVertical: t.spacing.sm,
+    },
+    orBadge: {
+      width: 30,
+      height: 30,
+      borderRadius: 15,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: t.isDark ? "rgba(23, 33, 51, 0.94)" : "rgba(255,255,255,0.95)",
+      borderWidth: 1,
+      borderColor: t.colors.border,
     },
     orLine: {
       flex: 1,
@@ -851,8 +1137,143 @@ const createStyles = (t) =>
       color: t.colors.muted,
       fontWeight: "800",
     },
-    bottomButton: {
-      marginTop: t.spacing.md,
+    officialModalOverlay: {
+      flex: 1,
+      paddingHorizontal: 18,
+      paddingVertical: 24,
+      backgroundColor: t.colors.overlay,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    officialModalScroll: {
+      width: "100%",
+      flexGrow: 0,
+      flexShrink: 1,
+      maxHeight: "92%",
+    },
+    officialModalScrollContent: {
+      paddingVertical: 4,
+    },
+    officialModalBubble: {
+      width: "100%",
+      maxWidth: 440,
+      alignSelf: "center",
+      marginTop: 0,
+    },
+    officialClose: {
+      width: 32,
+      height: 32,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: t.isDark ? "rgba(255,255,255,0.08)" : "rgba(18, 52, 93, 0.06)",
+    },
+    officialBubble: {
+      position: "relative",
+      marginTop: t.spacing.lg,
+      padding: 18,
+      borderRadius: 24,
+      backgroundColor: t.isDark ? "#172133" : "rgba(255,255,255,0.96)",
+      borderWidth: 1,
+      borderColor: t.isDark ? "#2A3A52" : "rgba(160, 186, 218, 0.72)",
+      ...t.shadow,
+    },
+    officialBubbleTail: {
+      position: "absolute",
+      top: -9,
+      left: 32,
+      width: 18,
+      height: 18,
+      backgroundColor: t.isDark ? "#172133" : "rgba(255,255,255,0.96)",
+      borderLeftWidth: 1,
+      borderTopWidth: 1,
+      borderColor: t.isDark ? "#2A3A52" : "rgba(160, 186, 218, 0.72)",
+      transform: [{ rotate: "45deg" }],
+    },
+    officialHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginBottom: 14,
+    },
+    officialIconBubble: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: `${t.colors.primary}2B`,
+      borderWidth: 1,
+      borderColor: `${t.colors.primary}66`,
+    },
+    officialTitle: {
+      fontSize: 16,
+      fontWeight: "900",
+      color: t.colors.text,
+    },
+    officialKicker: {
+      marginTop: 2,
+      color: t.colors.muted,
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 0.3,
+    },
+    officialBody: {
+      color: t.colors.text,
+      lineHeight: 20,
+      fontWeight: "600",
+    },
+    officialLinks: {
+      marginTop: 14,
+      gap: 8,
+    },
+    officialLink: {
+      minHeight: 58,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      borderRadius: 16,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.48)" : "rgba(241, 246, 253, 0.84)",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+    },
+    officialLinkIcon: {
+      width: 31,
+      height: 31,
+      borderRadius: 16,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: `${t.colors.primary}22`,
+    },
+    officialLinkCopy: {
+      flex: 1,
+      minWidth: 0,
+    },
+    officialLinkLabel: {
+      color: t.colors.text,
+      fontSize: 12,
+      fontWeight: "900",
+    },
+    officialLinkUrl: {
+      marginTop: 2,
+      color: t.colors.muted,
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    officialDisclaimer: {
+      marginTop: 12,
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 7,
+    },
+    officialDisclaimerText: {
+      flex: 1,
+      color: t.colors.muted,
+      lineHeight: 18,
+      fontSize: 12,
+      fontWeight: "600",
     },
     debugBox: {
       marginTop: t.spacing.md,
@@ -875,9 +1296,23 @@ const createStyles = (t) =>
     modalOverlay: {
       flex: 1,
       backgroundColor: t.colors.overlay,
+    },
+    modalKeyboardArea: {
+      flex: 1,
+    },
+    modalScroll: {
+      flex: 1,
+    },
+    modalScrollContent: {
+      flexGrow: 1,
       justifyContent: "center",
-      alignItems: "center",
-      padding: 20,
+      paddingHorizontal: 20,
+    },
+    saveModalCard: {
+      width: "100%",
+      maxWidth: 420,
+      alignSelf: "center",
+      backgroundColor: t.colors.surface,
     },
     loaderOverlay: {
       position: "absolute",
@@ -1041,6 +1476,8 @@ const createStyles = (t) =>
       borderRadius: 999,
     },
   });
+
+
 
 
 

@@ -10,6 +10,7 @@ import {
   View,
   Text,
   ActivityIndicator,
+  Image,
   StyleSheet,
   Modal,
   TouchableOpacity,
@@ -17,6 +18,7 @@ import {
   Platform,
   Alert,
 } from "react-native";
+import { Ionicons } from "@expo/vector-icons";
 import StackNavigator from "./src/navigation/StackNavigator";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
@@ -25,12 +27,15 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { registerForPushToken } from "./src/utils/push";
 import { registerBackgroundTask } from "./background";
 import { ThemeProvider, useTheme } from "./src/theme/ui";
-import { SafeAreaProvider } from "react-native-safe-area-context";
+import { SafeAreaProvider, useSafeAreaInsets } from "react-native-safe-area-context";
 import { fetchTrackingByCode } from "./src/services/trackingApi";
 import { checkAppUpdate } from "./src/services/updateCheck";
 import { runStorageMigrations } from "./src/services/storageMigration";
 import { normalizeTrackingCode, validateTrackingCode } from "./src/utils/tracking";
 import { LanguageProvider, useI18n } from "./src/i18n/ui";
+import { getLocalizedApiErrorMessage } from "./src/utils/apiErrors";
+
+const APP_BACKGROUND = require("./assets/fondo_inicio.png");
 
 export default function App() {
   return (
@@ -52,6 +57,7 @@ function AppRoot() {
   const [showLegacyNotifPrompt, setShowLegacyNotifPrompt] = useState(false);
   const [updateInfo, setUpdateInfo] = useState(null);
   const [startupReady, setStartupReady] = useState(false);
+  const [currentRouteName, setCurrentRouteName] = useState("Loading");
   const baseTheme = theme.isDark ? DarkTheme : DefaultTheme;
   const navTheme = {
     ...baseTheme,
@@ -66,6 +72,7 @@ function AppRoot() {
       notification: theme.colors.primary,
     },
   };
+  const showBottomNav = startupReady && ["Scan", "SavedPackages", "PackagesLocalExternal"].includes(currentRouteName);
 
   const responseListener = useRef();
   const LEGACY_NOTIF_PROMPT_SEEN_KEY = "legacy_notif_prompt_seen_v1";
@@ -85,8 +92,9 @@ function AppRoot() {
     try {
       const response = await fetchTrackingByCode(valid.value);
       navigationRef.navigate("Result", { data: response.data });
-    } catch {
+    } catch (error) {
       setOpeningFromNotification(false);
+      Alert.alert(t("api.errorTitle", "No se pudo consultar"), getLocalizedApiErrorMessage(t, error));
       return;
     }
     setOpeningFromNotification(false);
@@ -144,20 +152,35 @@ function AppRoot() {
         backgroundColor={theme.colors.bg}
       />
       {startupReady ? (
-        <NavigationContainer ref={navigationRef} theme={navTheme}>
-          <StackNavigator />
-        </NavigationContainer>
+        <View style={styles.appShell}>
+          <NavigationContainer
+            ref={navigationRef}
+            theme={navTheme}
+            onReady={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name || "Loading")}
+            onStateChange={() => setCurrentRouteName(navigationRef.getCurrentRoute()?.name || "Loading")}
+          >
+            <StackNavigator />
+          </NavigationContainer>
+          {showBottomNav ? (
+            <BottomNav
+              navigationRef={navigationRef}
+              currentRouteName={currentRouteName}
+              theme={theme}
+              t={t}
+            />
+          ) : null}
+        </View>
       ) : (
         <View
           style={[
             styles.loaderOverlay,
             {
-              backgroundColor: theme.isDark
-                ? "rgba(2, 6, 23, 0.88)"
-                : "rgba(255, 255, 255, 0.94)",
+              backgroundColor: "#FECC36",
             },
           ]}
         >
+          <Image source={APP_BACKGROUND} style={styles.startupBackground} resizeMode="contain" />
+          <View style={styles.startupShade} />
           <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={[styles.loaderText, { color: theme.colors.muted }]}>
             Preparando datos de la aplicacion...
@@ -253,7 +276,101 @@ function AppRoot() {
   );
 }
 
+function BottomNav({ navigationRef, currentRouteName, theme, t }) {
+  const insets = useSafeAreaInsets();
+  const items = [
+    { route: "Scan", label: t("nav.home", "Inicio"), icon: "home", iconOutline: "home-outline" },
+    { route: "SavedPackages", label: t("nav.pendingTab", "Mis pendientes"), icon: "bookmark", iconOutline: "bookmark-outline" },
+    { route: "PackagesLocalExternal", label: t("nav.deliveredTab", "Entregados"), icon: "cube", iconOutline: "cube-outline" },
+  ];
+
+  return (
+    <View
+      style={[
+        styles.bottomNav,
+        {
+          backgroundColor: theme.colors.surface,
+          borderTopColor: theme.colors.border,
+          paddingBottom: Math.max(insets.bottom, 8),
+        },
+      ]}
+    >
+      <View style={styles.bottomNavInner}>
+        {items.map((item) => {
+          const active = currentRouteName === item.route;
+          return (
+            <TouchableOpacity
+              key={item.route}
+              activeOpacity={0.78}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={item.label}
+              onPress={() => {
+                if (navigationRef.isReady()) navigationRef.navigate(item.route);
+              }}
+              style={styles.bottomNavItem}
+            >
+              <Ionicons
+                name={active ? item.icon : item.iconOutline}
+                size={21}
+                color={active ? theme.colors.secondary : theme.colors.muted}
+              />
+              <Text
+                numberOfLines={1}
+                style={[
+                  styles.bottomNavLabel,
+                  { color: active ? theme.colors.secondary : theme.colors.muted },
+                ]}
+              >
+                {item.label}
+              </Text>
+              {active ? <View style={[styles.bottomNavActiveMark, { backgroundColor: theme.colors.primary }]} /> : null}
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
+  appShell: {
+    flex: 1,
+  },
+  bottomNav: {
+    borderTopWidth: 1,
+    paddingTop: 6,
+    paddingHorizontal: 8,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowOffset: { width: 0, height: -3 },
+    shadowRadius: 10,
+    elevation: 8,
+  },
+  bottomNavInner: {
+    height: 58,
+    flexDirection: "row",
+    alignItems: "stretch",
+  },
+  bottomNavItem: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 3,
+    position: "relative",
+    paddingHorizontal: 4,
+  },
+  bottomNavLabel: {
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  bottomNavActiveMark: {
+    position: "absolute",
+    bottom: 0,
+    width: 30,
+    height: 3,
+    borderRadius: 3,
+  },
   loaderOverlay: {
     position: "absolute",
     top: 0,
@@ -263,6 +380,15 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     zIndex: 999,
+  },
+  startupBackground: {
+    ...StyleSheet.absoluteFillObject,
+    width: undefined,
+    height: undefined,
+  },
+  startupShade: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(255, 255, 255, 0.12)",
   },
   loaderText: {
     marginTop: 10,

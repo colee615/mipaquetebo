@@ -12,7 +12,6 @@ import { useEffect, useMemo, useState } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Ionicons } from "@expo/vector-icons";
 
-import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
 import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } from "../components/ui";
@@ -26,12 +25,10 @@ export default function SavedPackagesScreen({ navigation }) {
   const { t, language } = useI18n();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors, typography } = theme;
-  const insets = useSafeAreaInsets();
 
   const [packages, setPackages] = useState([]);
   const [eventsData, setEventsData] = useState({});
   const [loadingAll, setLoadingAll] = useState(false);
-  const [deliveredCount, setDeliveredCount] = useState(0);
 
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -57,7 +54,6 @@ export default function SavedPackagesScreen({ navigation }) {
 
       const newEventsData = {};
       const onlyWithExternalEvents = [];
-      let delivered = 0;
 
       await Promise.all(
         list.map(async (p) => {
@@ -67,10 +63,6 @@ export default function SavedPackagesScreen({ navigation }) {
             const events = getTrackingEvents(response.data);
             const last = getLatestPackageEvent(response.data);
             const deliveredNow = isPayloadDelivered(response.data);
-
-            if (deliveredNow) {
-              delivered += 1;
-            }
 
             if (!deliveredNow && events.length > 0) {
               newEventsData[p.code] = {
@@ -86,17 +78,17 @@ export default function SavedPackagesScreen({ navigation }) {
               lastEvent: null,
               fullData: { filtro: { codigo: p.code }, resultado: [] },
               hasExternos: false,
-              error: e?.message || "Error desconocido",
+              error: apiErrorText(e),
             };
+            // Keep the saved item visible so a failed refresh is explicit instead of silently hiding it.
+            onlyWithExternalEvents.push(p);
           }
         })
       );
 
       setEventsData(newEventsData);
       setPackages(onlyWithExternalEvents);
-      setDeliveredCount(delivered);
     } catch (e) {
-      setDeliveredCount(0);
       showSnack(t("saved.updateListFailed", "Could not refresh the list"), "danger");
     } finally {
       setLoadingAll(false);
@@ -228,6 +220,7 @@ export default function SavedPackagesScreen({ navigation }) {
             </View>
 
             <Text style={styles.lastEvent}>{formatPackageEventSummary(last, t, language, "saved.noRecentUpdates")}</Text>
+            {data?.error ? <Text style={styles.errorText}>{data.error}</Text> : null}
 
             <View style={[styles.rowBetween, { marginTop: 6 }]}>
               <TouchableOpacity
@@ -263,7 +256,7 @@ export default function SavedPackagesScreen({ navigation }) {
   );
 
   return (
-    <Screen>
+    <Screen edges={["left", "right"]}>
       <View style={styles.container}>
         <Card style={styles.searchCard}>
           <AppInput icon="search" placeholder={t("saved.searchPlaceholder", "Buscar por nombre o código...")} value={query} onChangeText={setQuery} />
@@ -292,7 +285,7 @@ export default function SavedPackagesScreen({ navigation }) {
             flexGrow: 1,
             paddingHorizontal: theme.spacing.lg,
             paddingTop: 2,
-            paddingBottom: 120 + insets.bottom,
+            paddingBottom: theme.spacing.lg,
           }}
           keyboardShouldPersistTaps="always"
         />
@@ -325,19 +318,6 @@ export default function SavedPackagesScreen({ navigation }) {
           </View>
         </Modal>
 
-        <TouchableOpacity
-          style={styles.fab}
-          onPress={() => navigation.navigate("PackagesLocalExternal")}
-          activeOpacity={0.9}
-        >
-          <View style={styles.fabIconWrap}>
-            <Ionicons name="cube" size={20} color="#1F2937" />
-            <View style={styles.fabBadge}>
-              <Text style={styles.fabBadgeText}>{deliveredCount > 99 ? "99+" : String(deliveredCount)}</Text>
-            </View>
-          </View>
-        </TouchableOpacity>
-
         <Snackbar visible={snack.visible} text={snack.text} type={snack.type} onHide={() => setSnack((s) => ({ ...s, visible: false }))} />
       </View>
     </Screen>
@@ -361,6 +341,7 @@ const createStyles = (t) =>
     name: { fontWeight: "900", fontSize: 15, color: t.colors.text },
     code: { marginTop: 3, fontSize: 12, color: t.colors.muted, fontWeight: "700" },
     lastEvent: { marginTop: 4, color: t.colors.text, opacity: 0.8, fontWeight: "700" },
+    errorText: { marginTop: 6, color: t.colors.danger, fontWeight: "800" },
 
     iconPill: {
       width: 38,
@@ -420,37 +401,6 @@ const createStyles = (t) =>
     },
     modalCard: { width: "100%", maxWidth: 440 },
 
-    fab: {
-      position: "absolute",
-      right: 18,
-      bottom: 18,
-      width: 58,
-      height: 58,
-      borderRadius: 29,
-      backgroundColor: t.colors.primary,
-      alignItems: "center",
-      justifyContent: "center",
-      ...t.shadowStrong,
-    },
-    fabIconWrap: {
-      width: 26,
-      height: 26,
-      alignItems: "center",
-      justifyContent: "center",
-    },
-    fabBadge: {
-      position: "absolute",
-      right: -4,
-      top: -4,
-      minWidth: 18,
-      height: 18,
-      borderRadius: 9,
-      backgroundColor: "#fff",
-      alignItems: "center",
-      justifyContent: "center",
-      paddingHorizontal: 3,
-    },
-    fabBadgeText: { fontSize: 10, fontWeight: "900", color: "#0F172A" },
   });
 
 

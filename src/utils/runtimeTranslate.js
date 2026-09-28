@@ -77,6 +77,9 @@ export async function translateTrackingPayload(payload, language = "es") {
       ...item,
       eventos: (Array.isArray(item?.eventos) ? item.eventos : []).map((ev) => ({
         ...ev,
+        _raw_nombre_evento: ev?._raw_nombre_evento || ev?.nombre_evento,
+        _raw_servicio: ev?._raw_servicio || ev?.servicio,
+        _raw_condition: ev?._raw_condition || ev?.condition,
         nombre_evento: tr(ev?.nombre_evento),
         servicio: tr(ev?.servicio),
         condition: tr(ev?.condition),
