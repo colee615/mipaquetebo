@@ -1,6 +1,6 @@
 ﻿// src/components/ui.js
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet, TextInput, Animated, useWindowDimensions } from "react-native";
+import { View, Text, TouchableOpacity, StyleSheet, TextInput, Animated, useWindowDimensions, Modal, Pressable, ActivityIndicator } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import * as Haptics from "expo-haptics";
@@ -142,6 +142,78 @@ export function OutlineButton({ title, icon, onPress, style, iconColor, transpar
   );
 }
 
+export function ConfirmDialog({
+  visible,
+  title,
+  message,
+  detailTitle,
+  detailSubtitle,
+  confirmText,
+  cancelText,
+  loadingText,
+  loading = false,
+  onConfirm,
+  onCancel,
+}) {
+  const theme = useTheme();
+  const styles = useMemo(() => createStyles(theme), [theme.isDark]);
+  const close = () => {
+    if (!loading) onCancel?.();
+  };
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      onRequestClose={close}
+    >
+      <View style={styles.confirmOverlay}>
+        <Pressable style={styles.confirmBackdrop} onPress={close} disabled={loading} />
+        <View style={styles.confirmCard}>
+          <View style={styles.confirmHeader}>
+            <View style={styles.confirmIconWrap}>
+              <Ionicons name="trash-outline" size={23} color={theme.colors.danger} />
+            </View>
+            <Text style={styles.confirmTitle}>{title}</Text>
+          </View>
+
+          <Text style={styles.confirmMessage}>{message}</Text>
+
+          {detailTitle || detailSubtitle ? (
+            <View style={styles.confirmDetails}>
+              {detailTitle ? <Text style={styles.confirmDetailTitle}>{detailTitle}</Text> : null}
+              {detailSubtitle ? <Text style={styles.confirmDetailSubtitle}>{detailSubtitle}</Text> : null}
+            </View>
+          ) : null}
+
+          <View style={styles.confirmActions}>
+            <TouchableOpacity
+              style={[styles.confirmDeleteButton, loading && styles.confirmDeleteButtonDisabled]}
+              onPress={onConfirm}
+              disabled={loading}
+              accessibilityRole="button"
+              accessibilityLabel={loading ? loadingText : confirmText}
+            >
+              {loading ? <ActivityIndicator size="small" color="#FFFFFF" /> : <Ionicons name="trash-outline" size={17} color="#FFFFFF" />}
+              <Text style={styles.confirmDeleteText}>{loading ? loadingText : confirmText}</Text>
+            </TouchableOpacity>
+            <OutlineButton
+              title={cancelText}
+              icon="close"
+              onPress={close}
+              disabled={loading}
+              style={styles.confirmCancelButton}
+            />
+          </View>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 export function AppInput({ value, onChangeText, placeholder, icon, autoCapitalize = "none", inputRef, accessibilityLabel, ...inputProps }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
@@ -172,7 +244,7 @@ export function AppInput({ value, onChangeText, placeholder, icon, autoCapitaliz
   );
 }
 
-export function Snackbar({ visible, text, type = "info", onHide }) {
+export function Snackbar({ visible, text, type = "info", onHide, topOffset = 0 }) {
   const theme = useTheme();
   const styles = useMemo(() => createStyles(theme), [theme.isDark]);
   const x = useRef(new Animated.Value(220)).current;
@@ -210,7 +282,7 @@ export function Snackbar({ visible, text, type = "info", onHide }) {
       style={[
         styles.snack,
         {
-          top: 0,
+          top: topOffset,
           opacity,
           transform: [{ translateX: x }],
           borderColor: `${bg}44`,
@@ -325,4 +397,98 @@ const createStyles = (t) =>
     },
     snackDot: { width: 10, height: 10, borderRadius: 5 },
     snackText: { flex: 1, color: t.colors.text, fontWeight: "700" },
+    confirmOverlay: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20,
+      backgroundColor: "rgba(10, 20, 38, 0.58)",
+    },
+    confirmBackdrop: {
+      ...StyleSheet.absoluteFillObject,
+    },
+    confirmCard: {
+      width: "100%",
+      maxWidth: 420,
+      padding: 22,
+      borderRadius: 22,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      borderTopWidth: 3,
+      borderTopColor: t.colors.primary,
+      backgroundColor: t.colors.surface,
+      ...t.shadowStrong,
+    },
+    confirmHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 13,
+      marginBottom: 14,
+    },
+    confirmIconWrap: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: `${t.colors.danger}18`,
+      borderWidth: 1,
+      borderColor: `${t.colors.danger}33`,
+    },
+    confirmTitle: {
+      flex: 1,
+      color: t.colors.text,
+      fontSize: 20,
+      fontWeight: "900",
+    },
+    confirmMessage: {
+      color: t.colors.muted,
+      fontSize: 15,
+      lineHeight: 22,
+    },
+    confirmDetails: {
+      marginTop: 16,
+      padding: 13,
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: t.colors.border,
+      backgroundColor: t.isDark ? "rgba(15, 23, 42, 0.58)" : "rgba(235, 242, 252, 0.7)",
+    },
+    confirmDetailTitle: {
+      color: t.colors.text,
+      fontSize: 14,
+      fontWeight: "900",
+    },
+    confirmDetailSubtitle: {
+      color: t.colors.muted,
+      fontSize: 12,
+      fontWeight: "700",
+      marginTop: 4,
+    },
+    confirmActions: {
+      gap: 10,
+      marginTop: 18,
+    },
+    confirmDeleteButton: {
+      minHeight: 48,
+      paddingHorizontal: 16,
+      borderRadius: 14,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 9,
+      backgroundColor: t.colors.danger,
+    },
+    confirmDeleteButtonDisabled: {
+      opacity: 0.65,
+    },
+    confirmDeleteText: {
+      color: "#FFFFFF",
+      fontSize: 14,
+      fontWeight: "900",
+    },
+    confirmCancelButton: {
+      width: "100%",
+      minHeight: 46,
+    },
   });

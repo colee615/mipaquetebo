@@ -39,7 +39,7 @@
       ]
     ],
     "extra": {
-      "apiBaseUrl": "https://trackingbo.correos.gob.bo:8100",
+      "apiBaseUrl": "https://trackingbo.correos.gob.bo",
       "enableUpdateCheck": true,
       "eas": {
         "projectId": "b88235af-ae91-4e4b-9dd2-40c9ff786c08"

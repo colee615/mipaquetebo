@@ -4,7 +4,6 @@
   FlatList,
   StyleSheet,
   TouchableOpacity,
-  Alert,
   Modal,
   ActivityIndicator,
 } from "react-native";
@@ -14,7 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { useTheme } from "../theme/ui";
 import { useI18n } from "../i18n/ui";
-import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar } from "../components/ui";
+import { Screen, Card, AppInput, Chip, PrimaryButton, OutlineButton, Snackbar, ConfirmDialog } from "../components/ui";
 import { postApiWithRetry } from "../config/api";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
@@ -36,6 +35,8 @@ export default function SavedPackagesScreen({ navigation }) {
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editPackageName, setEditPackageName] = useState("");
   const [editPackageCode, setEditPackageCode] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deletingPackage, setDeletingPackage] = useState(false);
 
   const [snack, setSnack] = useState({ visible: false, text: "", type: "info" });
   const showSnack = (text, type = "info") => setSnack({ visible: true, text, type });
@@ -116,48 +117,51 @@ export default function SavedPackagesScreen({ navigation }) {
     });
   }, [packages, query]);
 
-  const deletePackage = async (code) => {
-    Alert.alert(t("saved.deleteTitle", "Delete package"), t("saved.deleteBody", "Do you want to remove this package from your saved list?"), [
-      { text: t("common.cancel", "Cancel"), style: "cancel" },
-      {
-        text: t("common.delete", "Delete"),
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const saved = await AsyncStorage.getItem("savedPackages");
-            const list = saved ? JSON.parse(saved) : [];
-            const filteredStorage = list.filter((p) => p.code !== code);
-            await AsyncStorage.setItem("savedPackages", JSON.stringify(filteredStorage));
+  const deletePackage = (code) => {
+    const target = packages.find((item) => item.code === code);
+    setDeleteTarget(target || { code });
+  };
 
-            setPackages((prev) => prev.filter((p) => p.code !== code));
-            setEventsData((prev) => {
-              const copy = { ...prev };
-              delete copy[code];
-              return copy;
-            });
+  const confirmDeletePackage = async () => {
+    const code = deleteTarget?.code;
+    if (!code || deletingPackage) return;
 
-            if (ENABLE_SUBSCRIBE) {
-              try {
-                const token = await AsyncStorage.getItem("fcm_token");
-                if (token) {
-                  await postApiWithRetry(
-                    "/api/unsubscribe",
-                    { codigo: code, fcm_token: token },
-                    { timeout: 10000, retries: 1 }
-                  );
-                }
-              } catch (e) {
-                showSnack(apiErrorText(e), "danger");
-              }
-            }
+    setDeletingPackage(true);
+    try {
+      const saved = await AsyncStorage.getItem("savedPackages");
+      const list = saved ? JSON.parse(saved) : [];
+      const filteredStorage = list.filter((item) => item.code !== code);
+      await AsyncStorage.setItem("savedPackages", JSON.stringify(filteredStorage));
 
-            showSnack(t("saved.deleted", "Package deleted"), "danger");
-          } catch (e) {
-            showSnack(t("saved.deleteFailed", "Could not delete"), "danger");
+      setPackages((prev) => prev.filter((item) => item.code !== code));
+      setEventsData((prev) => {
+        const copy = { ...prev };
+        delete copy[code];
+        return copy;
+      });
+      setDeleteTarget(null);
+      showSnack(t("saved.deleted", "Package deleted"), "success");
+
+      if (ENABLE_SUBSCRIBE) {
+        try {
+          const token = await AsyncStorage.getItem("fcm_token");
+          if (token) {
+            await postApiWithRetry(
+              "/api/unsubscribe",
+              { codigo: code, fcm_token: token },
+              { timeout: 10000, retries: 1 }
+            );
           }
-        },
-      },
-    ]);
+        } catch (e) {
+          showSnack(apiErrorText(e), "danger");
+        }
+      }
+    } catch (e) {
+      setDeleteTarget(null);
+      showSnack(t("saved.deleteFailed", "Could not delete"), "danger");
+    } finally {
+      setDeletingPackage(false);
+    }
   };
 
   const viewPackage = (code) => {
@@ -317,6 +321,20 @@ export default function SavedPackagesScreen({ navigation }) {
             </Card>
           </View>
         </Modal>
+
+        <ConfirmDialog
+          visible={!!deleteTarget}
+          title={t("saved.deleteTitle", "Eliminar paquete")}
+          message={t("saved.deleteBody", "¿Deseas eliminar este paquete de tu lista guardada?")}
+          detailTitle={deleteTarget?.name || deleteTarget?.code}
+          detailSubtitle={deleteTarget?.name && deleteTarget.name !== deleteTarget.code ? deleteTarget.code : null}
+          confirmText={t("common.delete", "Eliminar")}
+          cancelText={t("common.cancel", "Cancelar")}
+          loadingText={t("common.deleting", "Eliminando...")}
+          loading={deletingPackage}
+          onConfirm={confirmDeletePackage}
+          onCancel={() => setDeleteTarget(null)}
+        />
 
         <Snackbar visible={snack.visible} text={snack.text} type={snack.type} onHide={() => setSnack((s) => ({ ...s, visible: false }))} />
       </View>

@@ -1,4 +1,4 @@
-import { View, Text, Modal, StyleSheet, BackHandler, Alert, ScrollView, ActivityIndicator, TouchableOpacity, Pressable, Animated, Easing, Dimensions, KeyboardAvoidingView, Platform, Linking } from "react-native";
+import { View, Text, Modal, StyleSheet, BackHandler, Alert, ScrollView, ActivityIndicator, TouchableOpacity, Pressable, Animated, Easing, Dimensions, KeyboardAvoidingView, Keyboard, Platform, Linking } from "react-native";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -29,6 +29,7 @@ export default function ScanScreen({ navigation }) {
   const [savingPackage, setSavingPackage] = useState(false);
 
   const [modalVisible, setModalVisible] = useState(false);
+  const [pendingTrackingData, setPendingTrackingData] = useState(null);
   const [officialInfoVisible, setOfficialInfoVisible] = useState(false);
   const [packageName, setPackageName] = useState("");
   const [lastScannedCode, setLastScannedCode] = useState("");
@@ -39,6 +40,7 @@ export default function ScanScreen({ navigation }) {
   const [guideCardHeight, setGuideCardHeight] = useState(0);
 
   const [snack, setSnack] = useState({ visible: false, text: "", type: "info" });
+  const isAnyModalVisible = modalVisible || officialInfoVisible || guideVisible;
   const showSnack = (text, type = "info") => setSnack({ visible: true, text, type });
   const apiErrorText = (error, overrides = {}) => getLocalizedApiErrorMessage(t, error, overrides);
   const [debugToken, setDebugToken] = useState("");
@@ -51,7 +53,7 @@ export default function ScanScreen({ navigation }) {
   const scanCardRef = useRef(null);
   const inputCardRef = useRef(null);
   const OFFICIAL_SITE_URL = "https://correos.gob.bo/";
-  const OFFICIAL_TRACKING_URL = "https://trackingbo.correos.gob.bo:8100/";
+  const OFFICIAL_TRACKING_URL = "https://trackingbo.correos.gob.bo/";
 
   const ENABLE_SUBSCRIBE = true;
   const GUIDE_KEY = "scan_onboarding_seen_v1";
@@ -243,8 +245,9 @@ export default function ScanScreen({ navigation }) {
     return list.some((p) => p.code === code);
   };
 
-  const openSaveModal = (code) => {
+  const openSaveModal = (code, data) => {
     setLastScannedCode(code);
+    setPendingTrackingData(data || null);
     setPackageName("");
     setModalVisible(true);
   };
@@ -292,7 +295,7 @@ export default function ScanScreen({ navigation }) {
       }
 
       setCodigo("");
-      openSaveModal(value);
+      openSaveModal(value, data);
     } catch (e) {
       showSnack(
         apiErrorText(e, { invalidCode: t("scan.invalidOrNotFound", "Invalid or not found code") }),
@@ -380,7 +383,13 @@ export default function ScanScreen({ navigation }) {
 
   const justViewEvents = () => {
     if (savingPackage) return;
+    const data = pendingTrackingData;
     closeSaveModal();
+    if (data) {
+      setPendingTrackingData(null);
+      navigation.navigate("Result", { data });
+      return;
+    }
     fetchResult(lastScannedCode, { loadingText: t("scan.redirecting", "Redirigiendo a eventos...") });
   };
 
@@ -757,6 +766,13 @@ export default function ScanScreen({ navigation }) {
               </View>
             </ScrollView>
           </KeyboardAvoidingView>
+          <Snackbar
+            visible={snack.visible && modalVisible}
+            text={snack.text}
+            type={snack.type}
+            topOffset={insets.top + 12}
+            onHide={() => setSnack((s) => ({ ...s, visible: false }))}
+          />
         </View>
       </Modal>
 
@@ -783,6 +799,13 @@ export default function ScanScreen({ navigation }) {
           >
             {renderOfficialInfo()}
           </ScrollView>
+          <Snackbar
+            visible={snack.visible && officialInfoVisible}
+            text={snack.text}
+            type={snack.type}
+            topOffset={insets.top + 12}
+            onHide={() => setSnack((s) => ({ ...s, visible: false }))}
+          />
         </View>
       </Modal>
 
@@ -940,11 +963,18 @@ export default function ScanScreen({ navigation }) {
               </>
             );
           })()}
+          <Snackbar
+            visible={snack.visible && guideVisible}
+            text={snack.text}
+            type={snack.type}
+            topOffset={insets.top + 12}
+            onHide={() => setSnack((s) => ({ ...s, visible: false }))}
+          />
         </View>
       </Modal>
 
       <Snackbar
-        visible={snack.visible}
+        visible={snack.visible && !isAnyModalVisible}
         text={snack.text}
         type={snack.type}
         onHide={() => setSnack((s) => ({ ...s, visible: false }))}

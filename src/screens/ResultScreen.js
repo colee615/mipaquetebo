@@ -1,5 +1,5 @@
-import { View, Text, Modal, ScrollView, StyleSheet, ActivityIndicator, Image, Linking, TouchableOpacity, Pressable, useWindowDimensions } from "react-native";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { View, Text, Modal, ScrollView, StyleSheet, ActivityIndicator, Image, Linking, TouchableOpacity, Pressable, useWindowDimensions, Alert } from "react-native";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "@react-navigation/native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -9,7 +9,7 @@ import { useI18n } from "../i18n/ui";
 import { Screen, Card, OutlineButton } from "../components/ui";
 import { fetchTrackingByCode } from "../services/trackingApi";
 import { getLocalizedApiErrorMessage } from "../utils/apiErrors";
-import { getTrackingEvents, getTrackingPresentation, isDeliveredEvent } from "../utils/packageEvents";
+import { getTrackingEvents, getTrackingPresentation } from "../utils/packageEvents";
 import countries from "i18n-iso-countries";
 import esLocale from "i18n-iso-countries/langs/es.json";
 import enLocale from "i18n-iso-countries/langs/en.json";
@@ -20,7 +20,7 @@ countries.registerLocale(enLocale);
 const readText = (value) => String(value || "").trim();
 const normalizeText = (value) => readText(value).toLowerCase();
 const S10_REGEX = /^[A-Z]{2}\d{9}[A-Z]{2}$/;
-const OFFICIAL_TRACKING_URL = "https://trackingbo.correos.gob.bo:8100/";
+const OFFICIAL_TRACKING_URL = "https://trackingbo.correos.gob.bo/";
 const OFFICIAL_SITE_URL = "https://correos.gob.bo/";
 
 // React Native only bundles local images referenced with a static require.
@@ -41,10 +41,6 @@ const TRACKING_STEP_IMAGES = {
   Expedicion: {
     active: require("../../assets/eventos/expedision.png"),
     pending: require("../../assets/eventos/expedision-blanco.png"),
-  },
-  Aduana: {
-    active: require("../../assets/eventos/aduana.png"),
-    pending: require("../../assets/eventos/aduana.png"),
   },
   Ventanilla: {
     active: require("../../assets/eventos/ventanilla.png"),
@@ -71,6 +67,8 @@ const TRACKING_STEP_IMAGES = {
     pending: require("../../assets/eventos/entregado-blanco.png"),
   },
 };
+
+const VENTANILLA_PROCESS_IMAGE = require("../../assets/tracking/ventanilla-proceso.png");
 
 const REGIONAL_CONTACTS = {
   "La Paz": {
@@ -118,6 +116,43 @@ const REGIONAL_CONTACTS = {
     direccion: "Av. Bruno Recua N.- 59",
     coords: "11°01'03.8\"S 68°45'15.9\"W",
   },
+};
+
+const getRegionalMapUrl = (contact) => {
+  if (!contact) return null;
+  const query = contact.coords || `${contact.direccion} ${contact.regional} Bolivia`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+};
+
+const getTrackingStepHelp = (step, presentation, t) => {
+  if (step === "Ventanilla") {
+    if (presentation.isPickupAvailable) return t("result.step.help.counterAvailable", "Tu envío está disponible para recoger en Ventanilla.");
+    if (presentation.pickupAtNonDestinationOffice) return t("result.step.help.counterTransit", "El envío está en una oficina de tránsito. Espera su llegada a la oficina de destino antes de recogerlo.");
+    if (presentation.customsPurchaseProofRequired) return t("result.step.help.counterProof", "Presenta el respaldo de compra o valor solicitado para completar la gestión en Ventanilla.");
+    if (presentation.customsActionRequired) return t("result.step.help.counterAction", "Completa la gestión indicada en Ventanilla.");
+    if (presentation.isCustoms && !presentation.isCancelled && !presentation.isReturning) {
+      return t("result.statusSubtitle.ventanilla", "Tu envío está en Ventanilla.");
+    }
+    if (presentation.customsReturnedToPostalFlow) return t("result.step.help.counterPostal", "Tu envío continúa en la red postal hacia Ventanilla.");
+  }
+
+  const helpKeys = {
+    Admision: ["result.step.help.admission", "Tu envío fue recibido y registrado."],
+    Clasificacion: ["result.step.help.classification", "Tu envío fue recibido y clasificado."],
+    Despacho: ["result.step.help.dispatch", "Fue preparado para su traslado."],
+    Expedicion: presentation.isReturning
+      ? ["result.step.help.forwardingReturn", "El envío fue marcado por IPS para devolución al remitente."]
+      : ["result.step.help.forwarding", "Está en movimiento dentro de la red postal."],
+    Ventanilla: ["result.step.help.counter", "Etapa de atención en oficina postal."],
+    Cartero: ["result.step.help.carrier", "Está con el cartero para su entrega."],
+    Entregado: ["result.step.help.delivered", "La entrega fue confirmada."],
+    "Devolución": ["result.step.help.returning", "IPS marcó el envío para devolución al remitente."],
+    "Retorno recibido": ["result.step.help.returnReceived", "La oficina de origen recibió el retorno."],
+    "Devuelto al remitente": ["result.step.help.returnedToSender", "La devolución al remitente fue completada."],
+    Cancelado: ["result.step.help.cancelled", "El envío fue cancelado."],
+  };
+  const [key, fallback] = helpKeys[step] || ["result.step.help.counter", "Etapa de atención en oficina postal."];
+  return t(key, fallback);
 };
 
 const COUNTRY_NAMES = {
@@ -351,7 +386,19 @@ const resolveSummary = (events, codigo, serviceLabel, t) => {
     if (originIso) originLabel = countryNameFromIso(originIso) || originIso;
   }
 
-  const destinationCity = readText(events.find((event) => event.destinationCity)?.destinationCity);
+  let destinationCity = readText(events.find((event) => event.destinationCity)?.destinationCity);
+  const latestEventName = normalizeText(latestEvent?._raw_nombre_evento || latestEvent?.nombre_evento || latestEvent?.title);
+  const latestEventConfirmsPickup = [32, 75].includes(Number(latestEvent?.codigo_evento))
+    || latestEventName.includes("oficina de entrega")
+    || latestEventName.includes("available for collection")
+    || latestEventName.includes("collection point for pick-up")
+    || latestEventName.includes("collection point for pickup");
+  const destinationCityFromOffice = events
+    .map((event) => detectBoliviaDepartment(event.office) || detectBoliviaDepartment(event.next_office))
+    .find(Boolean);
+  if (!destinationCity && latestEventConfirmsPickup && destinationCityFromOffice) {
+    destinationCity = destinationCityFromOffice;
+  }
   const destinationPayloadIso =
     getCountryCode(events.find((event) => getCountryCode(event.destinationCountryIso))?.destinationCountryIso) || null;
   const destinationPayloadName = readText(events.find((event) => readText(event.destinationCountryName))?.destinationCountryName);
@@ -393,8 +440,13 @@ const resolveSummary = (events, codigo, serviceLabel, t) => {
 
   let destinationFlagIso = null;
   let destinationLabel = "Internacional";
+  const destinationCityIsSpecific = destinationCity !== ""
+    && !["bo", "bolivia", "plurinational state of bolivia"].includes(destinationCity.toLowerCase());
 
-  if (destinationIsoFromCity !== null) {
+  if (destinationCityIsSpecific) {
+    destinationFlagIso = destinationPayloadIso || "BO";
+    destinationLabel = capitalizeWords(destinationCity);
+  } else if (destinationIsoFromCity !== null) {
     destinationFlagIso = destinationIsoFromCity;
     destinationLabel = destinationPayloadName !== "" ? destinationPayloadName : countryNameFromIso(destinationFlagIso) || destinationCity;
   } else if (explicitInternationalEntry) {
@@ -430,15 +482,20 @@ export default function ResultScreen({ route }) {
   const { t, language } = useI18n();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const { colors } = theme;
-  const { width: windowWidth } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
   const insets = useSafeAreaInsets();
 
   const initialData = route?.params?.data;
+  const isPreview = route?.params?.preview === true;
   const highlight = route?.params?.highlight || null;
   const [data, setData] = useState(initialData || null);
   const [refreshingData, setRefreshingData] = useState(false);
   const [refreshError, setRefreshError] = useState("");
+  const [progressViewportWidth, setProgressViewportWidth] = useState(0);
+  const [progressScrollOffset, setProgressScrollOffset] = useState(0);
   const [officialInfoVisible, setOfficialInfoVisible] = useState(false);
+  const [dismissedTrackingModalKey, setDismissedTrackingModalKey] = useState(null);
+  const progressScrollRef = useRef(null);
   const apiErrorText = useCallback((error, overrides = {}) => getLocalizedApiErrorMessage(t, error, overrides), [t]);
   const openExternalLink = useCallback(async (url) => {
     try {
@@ -520,30 +577,33 @@ export default function ResultScreen({ route }) {
 
   useFocusEffect(
     useCallback(() => {
-      refreshFromApi();
-    }, [refreshFromApi])
+      if (!isPreview) refreshFromApi();
+    }, [isPreview, refreshFromApi])
   );
 
   const events = useMemo(() => {
     return getTrackingEvents(data)
-      .map((event) => ({
-        ...event,
-        codigo: readText(event?.codigo || codigo),
-        createdAt: event?.created_at || event?.updated_at || null,
-        date: toDate(event?.created_at || event?.updated_at),
-        dayParts: parseRawDateParts(event?.created_at || event?.updated_at || null),
-        title: cleanEventTitle(readText(event?._raw_nombre_evento || event?.nombre_evento)) || t("event.default", "Event"),
-        rawTitle: readText(event?._raw_nombre_evento || event?.nombre_evento),
-        service: readText(event?._raw_servicio || event?.servicio),
-        office: readText(event?.office),
-        nextOffice: readText(event?.next_office),
-        description: readText(event?.descripcion),
-        originCity: readText(event?.ciudad_origen),
-        destinationCity: readText(event?.ciudad_destino),
-        destinationCountryIso: readText(event?.pais_destino_iso2),
-        destinationCountryName: readText(event?.pais_destino_nombre),
-        tabla_origen: readText(event?.tabla_origen),
-      }))
+      .map((event) => {
+        const rawTitle = readText(event?._raw_nombre_evento || event?.nombre_evento);
+        return {
+          ...event,
+          codigo: readText(event?.codigo || codigo),
+          createdAt: event?.created_at || event?.updated_at || null,
+          date: toDate(event?.created_at || event?.updated_at),
+          dayParts: parseRawDateParts(event?.created_at || event?.updated_at || null),
+          title: rawTitle ? cleanEventTitle(rawTitle) : `Evento #${readText(event?.evento_id) || "-"}`,
+          rawTitle,
+          service: readText(event?._raw_servicio || event?.servicio),
+          office: readText(event?.office),
+          nextOffice: readText(event?.next_office),
+          description: readText(event?.descripcion),
+          originCity: readText(event?.ciudad_origen),
+          destinationCity: readText(event?.ciudad_destino),
+          destinationCountryIso: readText(event?.pais_destino_iso2),
+          destinationCountryName: readText(event?.pais_destino_nombre),
+          tabla_origen: readText(event?.tabla_origen),
+        };
+      })
       .filter((event) => !!event.date)
       .sort((a, b) => b.date - a.date);
   }, [codigo, data, t]);
@@ -566,8 +626,24 @@ export default function ResultScreen({ route }) {
   }, [events]);
 
   const presentation = useMemo(() => getTrackingPresentation(data, t), [data, t]);
-  const progressStepWidth = Math.max(88, Math.floor((windowWidth - 52) / Math.min(3, presentation.steps.length || 1)));
+  const paymentNotice = data?.aviso_pago_qr || data?.avisoPagoQr || null;
+  const progressGrid = windowWidth > 720;
+  const progressCompact = !progressGrid;
+  const visibleProgressSteps = progressGrid
+    ? Math.min(windowWidth <= 980 ? 3 : presentation.steps.length || 1, presentation.steps.length || 1)
+    : Math.min(3, presentation.steps.length || 1);
+  const progressStepWidth = progressCompact
+    ? 96
+    : Math.max(88, Math.floor(((progressViewportWidth || windowWidth) - 24) / visibleProgressSteps));
+  const progressMaxScroll = progressGrid || !progressViewportWidth
+    ? 0
+    : Math.max(0, progressStepWidth * presentation.steps.length + 24 - progressViewportWidth);
+  const progressHasOverflow = progressMaxScroll > 8;
   const flowComplete = presentation.currentStep === presentation.steps.length - 1;
+  const completedStages = presentation.delivered ? presentation.steps.length : presentation.currentStep;
+  const progressCountText = t("result.progress.completedCount", "{completed} de {total} etapas completadas")
+    .replace("{completed}", String(completedStages))
+    .replace("{total}", String(presentation.steps.length));
   const latestDateParts = parseRawDateParts(events[0]?.createdAt || null);
   const serviceLabel = readText(events[0]?.service).toUpperCase() || "EMS";
   const summary = useMemo(() => resolveSummary(events, codigo, serviceLabel, t), [events, codigo, serviceLabel, t]);
@@ -590,9 +666,7 @@ export default function ResultScreen({ route }) {
     const latestEvent = events[0] || null;
     if (!latestEvent) return null;
 
-    const department = detectBoliviaDepartment(
-      presentation.customsReturnedToPostalFlow ? latestEvent.office : (latestEvent.office || latestEvent.nextOffice),
-    );
+    const department = detectBoliviaDepartment(latestEvent.office || latestEvent.nextOffice);
     const destinationCity = readText(latestEvent.destinationCity);
     const hasSpecificDestinationCity = !!destinationCity
       && !["bo", "bolivia", "plurinational state of bolivia"].includes(destinationCity.toLowerCase());
@@ -612,7 +686,7 @@ export default function ResultScreen({ route }) {
         return {
           message: t(
             "result.notice.customsReturnedBeforeDestination",
-            "Aduana liberó tu paquete en {department}. Aún no aparece en Ventanilla de {destination}.",
+            "Tu paquete continúa en tránsito en {department}. Espera su llegada a Ventanilla de {destination} antes de recogerlo.",
           ).replace("{department}", department).replace("{destination}", destinationCity),
           detail: null,
         };
@@ -620,27 +694,41 @@ export default function ResultScreen({ route }) {
       const message = department
         ? t(
           "result.notice.customsReturnedToPostalAtOffice",
-          "Aduana liberó tu paquete en {department}. Si ese es tu destino, consulta en Ventanilla para recogerlo.",
+          "Tu paquete continúa su recorrido desde {department}. Espera la confirmación de llegada a Ventanilla antes de recogerlo.",
         ).replace("{department}", department)
         : t(
           "result.notice.customsReturnedToPostal",
-          "Aduana liberó tu paquete. Espera el aviso de Ventanilla para saber dónde recogerlo.",
+          "Tu paquete continúa en tránsito. Espera la actualización de llegada a Ventanilla antes de recogerlo.",
         );
       return {
         message,
         detail: null,
       };
     }
+    if (presentation.customsReturnedToPostalFlow && presentation.pickupReadyAtDestinationCustoms) {
+      return {
+        message: department
+          ? t(
+            "result.notice.customsReleasedReady",
+            "Tu paquete ya llegó a la oficina de destino en {department}. Ya puedes recogerlo en Ventanilla.",
+          ).replace("{department}", department)
+          : t(
+            "result.notice.customsReleasedReadyUnknown",
+            "Tu paquete ya llegó a la oficina de destino. Ya puedes recogerlo en Ventanilla.",
+          ),
+        detail: department ? REGIONAL_CONTACTS[department] || null : null,
+      };
+    }
     if (presentation.customsPurchaseProofRequired) {
       return {
-        message: t("result.notice.customsProof", "Aduana solicita el respaldo de compra o valor del envío. Revisa las indicaciones para completar la gestión."),
-        detail: null,
+        message: t("result.notice.customsProof", "Tu envío requiere el respaldo de compra o valor. Consulta en Ventanilla cómo completar la gestión."),
+        detail: department ? REGIONAL_CONTACTS[department] || null : null,
       };
     }
     if (presentation.isHeldByCustoms) {
       return {
-        message: t("result.notice.customsHeld", "Aduana retuvo tu envío. Revisa las indicaciones disponibles antes de realizar una gestión."),
-        detail: null,
+        message: t("result.notice.customsHeld", "Tu envío requiere completar una gestión en Ventanilla. Consulta las indicaciones de la oficina."),
+        detail: department ? REGIONAL_CONTACTS[department] || null : null,
       };
     }
     if (presentation.isHeldAtExchange) {
@@ -652,9 +740,15 @@ export default function ResultScreen({ route }) {
     if (presentation.isCustoms) {
       return {
         message: department
-          ? t("result.notice.customsInTransit", "Tu envío está en gestión aduanera en {department}. Aún no figura como listo para recoger; espera una nueva actualización.").replace("{department}", department)
-          : t("result.notice.customsInTransitUnknown", "Tu envío está en gestión aduanera. Aún no figura como listo para recoger; espera una nueva actualización."),
-        detail: null,
+          ? t(
+            "result.notice.customsInTransit",
+            "Tu envío está en Ventanilla, en el departamento de {department}. Consulta en la oficina cómo completar el trámite.",
+          ).replace("{department}", department)
+          : t(
+            "result.notice.customsInTransitUnknown",
+            "Tu envío está en Ventanilla. Consulta en la oficina cómo completar el trámite.",
+          ),
+        detail: department ? REGIONAL_CONTACTS[department] || null : null,
       };
     }
 
@@ -662,19 +756,56 @@ export default function ResultScreen({ route }) {
 
     const officeIso = parseIsoFromOffice(latestEvent.office || latestEvent.nextOffice);
     const isBolivia = officeIso === "BO" || department !== null || summary.isNationalDestination;
-    if (!isBolivia) return null;
+    if (!isBolivia) {
+      return {
+        message: t(
+          "result.notice.pickupInternational",
+          "Tu paquete está listo para entregar. Puedes pasar a recogerlo en el punto de Ventanilla indicado en el seguimiento.",
+        ),
+        detail: null,
+      };
+    }
 
     return {
-      message: presentation.customsReturnedToPostalFlow && presentation.pickupReadyAtDestinationCustoms
-        ? (department
-          ? t("result.notice.customsReleasedReady", "Aduana liberó tu paquete en {department}. Ya puedes recogerlo en Ventanilla.").replace("{department}", department)
-          : t("result.notice.customsReleasedReadyUnknown", "Aduana liberó tu paquete en la oficina de destino. Ya puedes recogerlo en Ventanilla."))
-        : department
-          ? t("result.notice.pickupDepartment", `Tu paquete está listo para entregar. Debes pasar a recogerlo en el departamento de ${department}.`).replace("{department}", department)
-          : t("result.notice.pickupBolivia", "Tu paquete está listo para entregar. Debes pasar a recogerlo en tu oficina de destino en Bolivia."),
+      message: department
+        ? t("result.notice.pickupDepartment", "Tu paquete esta listo para entregar. Debes pasar a recoger en el departamento de {department}.").replace("{department}", department)
+        : t("result.notice.pickupBolivia", "Tu paquete esta listo para entregar. Debes pasar a recoger en tu oficina de destino en Bolivia."),
       detail: department ? REGIONAL_CONTACTS[department] || null : null,
     };
   }, [codigo, events, presentation, summary.isNationalDestination, t]);
+
+  const activeTrackingModalType = presentation.isPickupAvailable
+    ? "ready"
+    : presentation.hasCustomsCounterFlow
+      && presentation.isCustoms
+      && !presentation.isCancelled
+      && !presentation.isReturning
+      ? "ventanilla"
+      : paymentNotice
+        ? "payment"
+        : null;
+  const activeTrackingModalKey = activeTrackingModalType
+    ? `${codigo}:${activeTrackingModalType}:${events[0]?.createdAt || events[0]?.rawTitle || "actual"}:${paymentNotice?.importe || ""}`
+    : null;
+  const trackingModalVisible = !!activeTrackingModalKey && dismissedTrackingModalKey !== activeTrackingModalKey;
+  const closeTrackingModal = () => setDismissedTrackingModalKey(activeTrackingModalKey);
+
+  useEffect(() => {
+    if (progressGrid || !progressViewportWidth || !presentation.steps.length) return;
+    const requestedOffset = progressStepWidth * presentation.currentStep - progressViewportWidth / 2 + progressStepWidth / 2;
+    const offset = Math.min(Math.max(requestedOffset, 0), progressMaxScroll);
+    setProgressScrollOffset(offset);
+    requestAnimationFrame(() => progressScrollRef.current?.scrollTo({ x: offset, animated: false }));
+  }, [progressGrid, progressMaxScroll, progressStepWidth, progressViewportWidth, presentation.currentStep, presentation.steps.length]);
+
+  const scrollProgressByStep = (direction) => {
+    const nextOffset = Math.min(
+      Math.max(progressScrollOffset + direction * progressStepWidth, 0),
+      progressMaxScroll,
+    );
+    setProgressScrollOffset(nextOffset);
+    progressScrollRef.current?.scrollTo({ x: nextOffset, animated: true });
+  };
 
   const isHighlightedEvent = (event) => {
     if (!highlight) return false;
@@ -683,6 +814,65 @@ export default function ResultScreen({ route }) {
     const sameOffice = !highlight.office || highlight.office === event.office;
     return sameDate && sameTitle && sameOffice;
   };
+
+  const progressStepContent = presentation.steps.map((step, index) => {
+    const done = index < presentation.currentStep;
+    const current = index === presentation.currentStep;
+    const rawStep = presentation.displayRawSteps?.[index] || step;
+    const stepImage = TRACKING_STEP_IMAGES[rawStep]?.[done || current ? "active" : "pending"];
+    const stepState = done
+      ? t("result.progress.done", "Listo")
+      : current
+        ? presentation.isCancelled
+          ? t("result.step.cancelled", "Cancelado")
+          : presentation.isReturning
+            ? t("result.status.returning", "Devolución en curso")
+            : presentation.delivered
+              ? t("result.step.delivered", "Entregado")
+              : t("result.progress.current", "En curso")
+        : t("result.progress.pending", "Pendiente");
+    const stepHelp = getTrackingStepHelp(rawStep, presentation, t);
+    return (
+      <View key={`${rawStep}-${index}`} style={[styles.progressStep, progressCompact ? styles.progressStepCompact : null, { width: progressStepWidth }]}>
+        <View style={[styles.progressNodeRow, progressCompact ? styles.progressNodeRowCompact : null]}>
+          <View style={[styles.progressLine, styles.progressLineLeft, progressCompact ? styles.progressLineCompact : null, index === 0 ? styles.progressLineHidden : null, done || current ? styles.progressLineDone : null]} />
+          <TouchableOpacity
+            style={[
+              styles.progressDot,
+              progressCompact ? styles.progressDotCompact : null,
+              done ? styles.progressDotDone : null,
+              current ? styles.progressDotCurrent : null,
+              current && presentation.isCancelled ? styles.progressDotCancelled : null,
+              current && presentation.isReturning ? styles.progressDotReturning : null,
+            ]}
+            onPress={() => Alert.alert(step, `${stepHelp}\n\n${stepState}`)}
+            activeOpacity={0.82}
+            accessibilityRole="button"
+            accessibilityLabel={`${step}. ${stepHelp}. Estado: ${stepState}`}
+          >
+            {stepImage ? (
+              <Image source={stepImage} style={styles.progressImage} resizeMode="contain" />
+            ) : (
+              <Text style={styles.progressFallback}>{presentation.isCancelled && current ? "!" : "○"}</Text>
+            )}
+          </TouchableOpacity>
+          <View style={[styles.progressLine, styles.progressLineRight, progressCompact ? styles.progressLineCompact : null, index === presentation.steps.length - 1 ? styles.progressLineHidden : null, done ? styles.progressLineDone : null]} />
+        </View>
+        <Text style={[styles.progressLabel, done || current ? styles.progressLabelActive : null]} numberOfLines={2} ellipsizeMode="tail">
+          {step}
+        </Text>
+        <Text style={[
+          styles.progressState,
+          done ? styles.progressStateDone : null,
+          current ? styles.progressStateCurrent : null,
+          current && presentation.isCancelled ? styles.progressStateCancelled : null,
+          current && presentation.isReturning ? styles.progressStateReturning : null,
+        ]} numberOfLines={2} ellipsizeMode="tail">
+          {stepState}
+        </Text>
+      </View>
+    );
+  });
 
   if (!data) {
     return (
@@ -747,17 +937,19 @@ export default function ResultScreen({ route }) {
               <Text style={styles.statusSubtitle}>
                 {presentation.isReturning
                   ? t("result.returnSubtitle", "El paquete esta regresando al remitente.")
-                  : summary.latestEvent?.title || t("event.default", "Event")}
+                  : presentation.isCustoms
+                    ? t("result.statusSubtitle.ventanilla", "Tu envío está en Ventanilla.")
+                    : summary.latestEvent?.title || t("event.default", "Event")}
               </Text>
-              <Text style={styles.statusCode}>Tracking: {codigo}</Text>
+              <Text style={styles.statusCode}>{t("result.trackingCode", "Tracking")}: {codigo}</Text>
             </View>
           </View>
 
           <View style={styles.summaryGrid}>
-            <SummaryTile label="Origen postal" value={summary.originLabel} iso2={summary.originIso} accentStyle={styles.metaAccentA} styles={styles} />
-            <SummaryTile label="Destino de entrega" value={summary.destinationLabel} iso2={summary.destinationIso} accentStyle={styles.metaAccentB} styles={styles} />
-            <SummaryTile label="Servicio" value={serviceLabel} accentStyle={styles.metaAccentC} styles={styles} />
-            <SummaryTile label="Ultima actualizacion" value={latestDateParts ? `${latestDateParts.numericLabel} ${latestDateParts.timeLabel}` : "-"} accentStyle={styles.metaAccentD} styles={styles} />
+            <SummaryTile label={t("result.originPostal", "Origen postal")} value={summary.originLabel} iso2={summary.originIso} accentStyle={styles.metaAccentA} styles={styles} />
+            <SummaryTile label={t("result.destinationDelivery", "Destino de entrega")} value={summary.destinationLabel} iso2={summary.destinationIso} accentStyle={styles.metaAccentB} styles={styles} />
+            <SummaryTile label={t("result.service", "Servicio")} value={serviceLabel} accentStyle={styles.metaAccentC} styles={styles} />
+            <SummaryTile label={t("result.lastUpdate", "Última actualización")} value={latestDateParts ? `${latestDateParts.numericLabel} ${latestDateParts.timeLabel}` : "-"} accentStyle={styles.metaAccentD} styles={styles} />
           </View>
 
           {refreshError ? (
@@ -770,85 +962,88 @@ export default function ResultScreen({ route }) {
         </Card>
 
         <Card style={styles.progressCard}>
-          <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>Progreso del envio</Text>
-            <Text style={styles.cardMeta}>
-              Paso actual: <Text style={styles.cardMetaStrong}>{presentation.currentStepLabel}</Text>
-            </Text>
+          <View style={[styles.cardHead, styles.progressCardHead]}>
+            <View style={styles.progressHeadingCopy}>
+              <View style={styles.progressTitleRow}>
+                <View style={styles.progressTitleAccent} />
+                <Text style={styles.cardTitle}>{t("result.progressTitle", "Progreso del envío")}</Text>
+              </View>
+              <View style={styles.progressHelpRow}>
+                <View style={styles.progressHelpIcon}><Text style={styles.progressHelpIconText}>i</Text></View>
+                <Text style={styles.progressHelp}>{t("result.progress.help", "Toca un icono para ver los detalles.")}</Text>
+              </View>
+            </View>
+            <View style={styles.progressStatus}>
+              <Text style={styles.progressCompleted}>{progressCountText}</Text>
+              <View style={[styles.progressStatusChip, presentation.delivered ? styles.progressStatusChipDelivered : null, presentation.isReturning ? styles.progressStatusChipReturning : null]}>
+                <Text style={styles.progressStatusLabel}>
+                  {presentation.delivered
+                    ? t("result.progress.shipmentLabel", "Envío:")
+                    : t("result.progress.inProgressLabel", "En curso:")}
+                </Text>
+                <Text style={[styles.progressStatusValue, presentation.delivered ? styles.progressStatusValueDelivered : null, presentation.isReturning ? styles.progressStatusValueReturning : null]}>
+                  {presentation.delivered
+                    ? t("result.step.delivered", "Entregado")
+                    : presentation.currentStepLabel}
+                </Text>
+              </View>
+            </View>
           </View>
 
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.progressTrack}>
-            {presentation.steps.map((step, index) => {
-              const done = index < presentation.currentStep;
-              const current = index === presentation.currentStep;
-              const rawStep = presentation.rawSteps?.[index] || step;
-              const combinedCustomsStep = rawStep === "Ventanilla = Aduana";
-              const stepImages = TRACKING_STEP_IMAGES[rawStep];
-              const stepImage = stepImages?.[done || current ? "active" : "pending"];
-              return (
-                <View key={`${rawStep}-${index}`} style={[styles.progressStep, { width: progressStepWidth }]}>
-                  <View style={styles.progressNodeRow}>
-                    <View style={[styles.progressLine, index === 0 ? styles.progressLineHidden : null, done || current ? styles.progressLineDone : null]} />
-                    <View style={[
-                      styles.progressDot,
-                      done ? styles.progressDotDone : null,
-                      current ? styles.progressDotCurrent : null,
-                      current && presentation.isCancelled ? styles.progressDotCancelled : null,
-                      current && presentation.isCustoms ? styles.progressDotCustoms : null,
-                      current && presentation.isReturning ? styles.progressDotReturning : null,
-                    ]}>
-                      {combinedCustomsStep ? (
-                        <View style={[styles.progressSplitArt, !done && !current ? styles.progressSplitArtPending : null]}>
-                          <View style={styles.progressSplitHalfLeft}>
-                            <Image source={TRACKING_STEP_IMAGES.Ventanilla.active} style={[styles.progressSplitSource, presentation.customsSubstep === "customs" ? styles.progressSplitSourceDimmed : null]} resizeMode="contain" />
-                          </View>
-                          <View style={styles.progressSplitHalfRight}>
-                            <Image source={TRACKING_STEP_IMAGES.Aduana.active} style={[styles.progressSplitSource, styles.progressSplitSourceRight, presentation.customsSubstep === "counter" ? styles.progressSplitSourceDimmed : null]} resizeMode="contain" />
-                          </View>
-                        </View>
-                      ) : stepImage ? (
-                        <Image source={stepImage} style={styles.progressImage} resizeMode="contain" />
-                      ) : (
-                        <Text style={styles.progressFallback}>{presentation.isCancelled && current ? "!" : "○"}</Text>
-                      )}
-                    </View>
-                    <View style={[styles.progressLine, index === presentation.steps.length - 1 ? styles.progressLineHidden : null, done ? styles.progressLineDone : null]} />
-                  </View>
-                  {combinedCustomsStep ? (
-                    <View style={styles.combinedStageLabels}>
-                      <Text style={[styles.combinedStageLabel, done ? styles.progressLabelActive : null, current && presentation.customsSubstep === "counter" ? styles.combinedStageLabelCurrent : null]} numberOfLines={1}>{t("result.step.counter", "Ventanilla")}</Text>
-                      <Text style={styles.combinedStageEquals}>=</Text>
-                      <Text style={[styles.combinedStageLabel, done ? styles.progressLabelActive : null, current && presentation.customsSubstep === "customs" ? styles.combinedStageLabelCurrent : null]} numberOfLines={1}>{t("result.step.customs", "Aduana")}</Text>
-                    </View>
-                  ) : (
-                    <Text style={[styles.progressLabel, done || current ? styles.progressLabelActive : null]} numberOfLines={2}>
-                      {step}
-                    </Text>
-                  )}
-                  <Text style={[
-                    styles.progressState,
-                    done ? styles.progressStateDone : null,
-                    current ? styles.progressStateCurrent : null,
-                    current && presentation.isCancelled ? styles.progressStateCancelled : null,
-                    current && presentation.isCustoms ? styles.progressStateCustoms : null,
-                    current && presentation.isReturning ? styles.progressStateReturning : null,
-                  ]}>
-                    {done
-                      ? t("result.progress.done", "Listo")
-                      : current
-                        ? presentation.isCancelled
-                          ? t("result.step.cancelled", "Cancelado")
-                          : presentation.isReturning
-                            ? t("result.status.returning", "Devolucion en curso")
-                            : presentation.delivered
-                              ? t("result.step.delivered", "Entregado")
-                              : t("result.progress.current", "En curso")
-                        : t("result.progress.pending", "Pendiente")}
-                  </Text>
-                </View>
-              );
-            })}
-          </ScrollView>
+          <View
+            style={progressGrid ? styles.progressGridViewport : styles.progressViewport}
+            onLayout={(event) => {
+              const width = event?.nativeEvent?.layout?.width || 0;
+              if (width > 0 && Math.abs(width - progressViewportWidth) > 1) {
+                setProgressViewportWidth(width);
+              }
+            }}
+          >
+            {progressGrid ? (
+              <View style={styles.progressGridTrack}>{progressStepContent}</View>
+            ) : (
+              <>
+                <ScrollView
+                  ref={progressScrollRef}
+                  horizontal
+                  style={styles.progressScroll}
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={styles.progressTrack}
+                  scrollEventThrottle={100}
+                  onScroll={(event) => {
+                    const nextOffset = event?.nativeEvent?.contentOffset?.x || 0;
+                    setProgressScrollOffset((current) => Math.abs(nextOffset - current) > 8 ? nextOffset : current);
+                  }}
+                >
+                  {progressStepContent}
+                </ScrollView>
+                {progressHasOverflow ? (
+                  <>
+                    <TouchableOpacity
+                      style={[styles.progressNavButton, styles.progressNavButtonCompact]}
+                      onPress={() => scrollProgressByStep(-1)}
+                      disabled={progressScrollOffset <= 8}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("result.progress.previous", "Ver etapas anteriores")}
+                    >
+                      <Ionicons name="chevron-back" size={17} color="#1A549A" />
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.progressNavButton, styles.progressNavButtonNextCompact]}
+                      onPress={() => scrollProgressByStep(1)}
+                      disabled={progressScrollOffset >= progressMaxScroll - 8}
+                      activeOpacity={0.8}
+                      accessibilityRole="button"
+                      accessibilityLabel={t("result.progress.next", "Ver etapas siguientes")}
+                    >
+                      <Ionicons name="chevron-forward" size={17} color="#1A549A" />
+                    </TouchableOpacity>
+                  </>
+                ) : null}
+              </>
+            )}
+          </View>
         </Card>
 
         {pickupNotice ? (
@@ -856,19 +1051,20 @@ export default function ResultScreen({ route }) {
             <Text style={styles.noticeText}>{pickupNotice.message}</Text>
             {pickupNotice.detail ? (
               <View style={styles.noticeDetail}>
-                <InfoRow label="Oficina" value={pickupNotice.detail.regional} icon="business-outline" styles={styles} theme={theme} />
-                <InfoRow
-                  label="Direccion"
-                  value={pickupNotice.detail.direccion}
-                  icon="location-outline"
-                  styles={styles}
-                  theme={theme}
-                  onPress={() => openExternalLink(
-                    `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
-                      pickupNotice.detail.coords || `${pickupNotice.detail.direccion} ${pickupNotice.detail.regional} Bolivia`
-                    )}`
-                  )}
-                />
+                <View style={styles.noticeContactRow}>
+                  <Text style={styles.noticeContactLabel}>{t("result.office", "Oficina")}</Text>
+                  <Text style={styles.noticeContactValue}>{pickupNotice.detail.regional}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.noticeContactRow}
+                  onPress={() => openExternalLink(getRegionalMapUrl(pickupNotice.detail))}
+                  activeOpacity={0.8}
+                  accessibilityRole="link"
+                  accessibilityLabel={`${t("result.address", "Dirección")}: ${pickupNotice.detail.direccion}`}
+                >
+                  <Text style={styles.noticeContactLabel}>{t("result.address", "Dirección")}</Text>
+                  <Text style={[styles.noticeContactValue, styles.noticeContactLink]}>{pickupNotice.detail.direccion}</Text>
+                </TouchableOpacity>
               </View>
             ) : null}
           </Card>
@@ -876,7 +1072,7 @@ export default function ResultScreen({ route }) {
 
         <Card style={styles.historyCard}>
           <View style={styles.cardHead}>
-            <Text style={styles.cardTitle}>Historial de seguimiento</Text>
+            <Text style={styles.cardTitle}>{t("result.historyTitle", "Historial de seguimiento")}</Text>
           </View>
 
           {events.length === 0 ? (
@@ -889,7 +1085,7 @@ export default function ResultScreen({ route }) {
               <View key={group.dayKey} style={styles.historyGroup}>
                 <View style={styles.historyGroupHead}>
                   <Text style={styles.historyGroupTitle}>{group.dayLabel}</Text>
-                  <Text style={styles.historyGroupCount}>{group.events.length} evento(s)</Text>
+                  <Text style={styles.historyGroupCount}>{group.events.length} {t("result.eventCount", "evento(s)")}</Text>
                 </View>
 
                 <View style={styles.historyFeed}>
@@ -902,9 +1098,19 @@ export default function ResultScreen({ route }) {
                         </View>
                         <View style={styles.historyBody}>
                           <Text style={styles.historyEventTitle}>{event.title}</Text>
+                          {Number(event?.codigo_evento) === 37 && readText(event?.delivery_mode) ? (
+                            <View style={styles.historyDeliveryMode}>
+                              <Ionicons name="car-outline" size={13} color="#2B679F" />
+                              <Text style={styles.historyDeliveryModeText}>
+                                {t("result.deliveryMethod", "Entrega")}: {event.delivery_mode === "DOMICILIARIA"
+                                  ? t("result.deliveryHome", "Cartero · domiciliaria")
+                                  : t("result.deliveryCounter", "Ventanilla · no domiciliaria")}
+                              </Text>
+                            </View>
+                          ) : null}
                           <View style={styles.historyMeta}>
                             <InfoRow
-                              label="Lugar"
+                              label={t("result.location", "Lugar")}
                               value={cleanOfficeLabel(event.office)}
                               icon="business-outline"
                               styles={styles}
@@ -913,7 +1119,7 @@ export default function ResultScreen({ route }) {
                               iso2={parseIsoFromOffice(event.office) || countryIsoFromName(countryNameFromOffice(event.office))}
                             />
                             <InfoRow
-                              label="Siguiente"
+                              label={t("result.next", "Siguiente")}
                               value={cleanOfficeLabel(event.nextOffice)}
                               icon="navigate-outline"
                               styles={styles}
@@ -921,11 +1127,6 @@ export default function ResultScreen({ route }) {
                               iso2={parseIsoFromOffice(event.nextOffice) || countryIsoFromName(countryNameFromOffice(event.nextOffice))}
                             />
                           </View>
-                          {isDeliveredEvent(event) ? (
-                            <View style={styles.latestBadge}>
-                              <Text style={styles.latestBadgeText}>Entregado</Text>
-                            </View>
-                          ) : null}
                         </View>
                       </View>
                     );
@@ -937,6 +1138,23 @@ export default function ResultScreen({ route }) {
         </Card>
 
       </ScrollView>
+
+      <TrackingUpdateModal
+        visible={trackingModalVisible}
+        type={activeTrackingModalType}
+        office={pickupNotice?.detail || null}
+        paymentNotice={paymentNotice}
+        styles={styles}
+        t={t}
+        wide={windowWidth > 520}
+        large={windowWidth > 760}
+        stacked={windowWidth <= 520}
+        compact={windowWidth <= 360}
+        windowWidth={windowWidth}
+        windowHeight={windowHeight}
+        onClose={closeTrackingModal}
+        onOpenMap={openExternalLink}
+      />
 
       <Modal
         visible={officialInfoVisible}
@@ -1002,6 +1220,220 @@ function InfoRow({ label, value, icon, theme, styles, iso2, hideRow = false, onP
   );
 }
 
+function TrackingUpdateModal({
+  visible,
+  type,
+  office,
+  paymentNotice,
+  styles,
+  t,
+  wide,
+  large,
+  stacked,
+  compact,
+  windowWidth,
+  windowHeight,
+  onClose,
+  onOpenMap,
+}) {
+  const ready = type === "ready";
+  const ventanilla = type === "ventanilla";
+  const hasPaymentNotice = !!paymentNotice?.importe;
+  const paymentStage = paymentNotice?.etapa || "Cartero";
+  const paymentAmount = String(paymentNotice?.importe || "");
+  const paymentTitle = paymentStage === "Expedicion"
+    ? t("result.payment.onWayTitle", "Tu paquete sigue en camino")
+    : paymentStage === "Ventanilla"
+      ? t("result.payment.counterTitle", "Tu envío continúa en Ventanilla")
+      : t("result.payment.deliveryTitle", "Tu paquete va camino a ti");
+  const paymentStatus = paymentStage === "Expedicion"
+    ? t("result.payment.onWayState", "En camino")
+    : paymentStage === "Ventanilla"
+      ? t("result.payment.counterState", "Ventanilla")
+      : t("result.payment.deliveryState", "En reparto");
+  const paymentDescription = paymentStage === "Expedicion"
+    ? t("result.payment.onWayDescription", "Tu envío está avanzando por la red postal. Tiene un pago pendiente de Bs {amount}. Cuando llegue a ventanilla o salga a reparto, podrás pagar con QR para completar la entrega.")
+      .replace("{amount}", paymentAmount)
+    : paymentStage === "Ventanilla"
+      ? t("result.payment.counterDescription", "Tu envío tiene un pago pendiente. Cuando esté listo para recoger, podrás completar el pago con QR en Ventanilla.")
+      : t("result.payment.deliveryDescription", "Tu paquete está con el cartero. Para completar la entrega, por favor realiza el pago con QR al recibirlo.");
+  const paymentTip = ready || paymentStage === "Ventanilla"
+    ? t("result.payment.counterTip", "Puedes completar el pago con QR en Ventanilla al momento de recogerlo.")
+    : paymentStage === "Expedicion"
+      ? t("result.payment.onWayTip", "Al llegar el paquete, solicita el QR en ventanilla o al cartero. Ten a mano tu código de seguimiento.")
+      : t("result.payment.deliveryTip", "Solicita el QR al cartero cuando recibas tu paquete.");
+  const mapUrl = getRegionalMapUrl(office);
+  const title = ready
+    ? t("result.modal.readyTitle", "¡Ya puedes recoger tu paquete!")
+    : ventanilla
+      ? t("result.modal.ventanillaTitle", "Tu envío está en Ventanilla")
+      : paymentTitle;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      statusBarTranslucent
+      presentationStyle="overFullScreen"
+      onRequestClose={onClose}
+    >
+      <View style={[styles.trackingModalOverlay, stacked ? styles.trackingModalOverlayStacked : null]}>
+        <Pressable
+          style={StyleSheet.absoluteFill}
+          onPress={onClose}
+          accessibilityRole="button"
+          accessibilityLabel={t("common.close", "Cerrar")}
+        />
+        <View
+          style={[
+            styles.trackingModalPanel,
+            ready ? styles.trackingModalPanelReady : null,
+            ventanilla ? styles.trackingModalPanelProgress : null,
+            stacked ? styles.trackingModalPanelStacked : null,
+            {
+              width: Math.max(0, Math.min(windowWidth - (stacked ? 18 : 32), ventanilla ? (large ? 700 : 680) : 540)),
+              maxHeight: Math.max(0, Math.min(windowHeight * (stacked ? 0.9 : 0.88), windowHeight - (stacked ? 16 : 48))),
+            },
+          ]}
+          accessibilityViewIsModal
+        >
+          <View style={styles.trackingModalAccent}>
+            <View style={styles.trackingModalAccentYellow} />
+            <View style={styles.trackingModalAccentBlue} />
+          </View>
+          <TouchableOpacity
+            style={styles.trackingModalClose}
+            onPress={onClose}
+            accessibilityRole="button"
+            accessibilityLabel={t("common.close", "Cerrar")}
+            hitSlop={8}
+          >
+            <Ionicons name="close" size={20} color="#60758F" />
+          </TouchableOpacity>
+
+          <ScrollView
+            style={styles.trackingModalScroll}
+            contentContainerStyle={[styles.trackingModalScrollContent, stacked ? styles.trackingModalScrollContentStacked : null]}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
+            {ready ? (
+              <>
+                <View style={styles.trackingModalReadyHeader}>
+                  <View style={styles.trackingModalReadyIcon}>
+                    <Ionicons name="cube-outline" size={30} color="#1B5CA2" />
+                  </View>
+                  <View style={styles.trackingModalReadyCopy}>
+                    <Text style={styles.trackingModalEyebrow}>{t("result.modal.readyLabel", "BUENAS NOTICIAS")}</Text>
+                    <Text style={styles.trackingModalReadyState}>{t("result.modal.readyState", "Listo para recoger")}</Text>
+                  </View>
+                </View>
+                <Text style={styles.trackingModalTitle}>{title}</Text>
+                <Text style={styles.trackingModalDescription}>
+                  {t("result.modal.readyDescription", "Tu paquete ya llegó a la oficina de destino. Presenta tu código de seguimiento al recogerlo.")}
+                </Text>
+              </>
+            ) : ventanilla ? (
+              <View style={[styles.trackingModalProgressLayout, wide ? styles.trackingModalProgressLayoutWide : null, large ? styles.trackingModalProgressLayoutLarge : null]}>
+                <Image
+                  source={VENTANILLA_PROCESS_IMAGE}
+                  style={[
+                    styles.trackingModalIllustration,
+                    wide ? styles.trackingModalIllustrationWide : null,
+                    large ? styles.trackingModalIllustrationLarge : null,
+                    compact ? styles.trackingModalIllustrationCompact : null,
+                  ]}
+                  resizeMode="contain"
+                  accessibilityIgnoresInvertColors
+                />
+                <View style={[styles.trackingModalInfo, wide ? styles.trackingModalInfoWide : null]}>
+                  <Text style={styles.trackingModalTitle}>{title}</Text>
+                  {office ? (
+                    <View style={[styles.trackingModalOfficeCard, stacked ? styles.trackingModalOfficeCardStacked : null]}>
+                      <View style={styles.trackingModalOfficeDetails}>
+                        <Text style={styles.trackingModalEyebrow}>{t("result.modal.pointOfAttention", "Punto de atención")}</Text>
+                        <Text style={styles.trackingModalOfficeName}>{office.regional}</Text>
+                        <Text style={styles.trackingModalAddress}>{office.direccion}</Text>
+                      </View>
+                      {mapUrl ? (
+                        <TouchableOpacity
+                          style={[styles.trackingModalMapButton, stacked ? styles.trackingModalMapButtonStacked : null]}
+                          onPress={() => onOpenMap(mapUrl)}
+                          activeOpacity={0.82}
+                          accessibilityRole="link"
+                          accessibilityLabel={t("result.modal.viewMap", "Ver en mapa")}
+                        >
+                          <Text style={styles.trackingModalMapText}>{t("result.modal.viewMap", "Ver en mapa")}</Text>
+                          <Ionicons name="open-outline" size={14} color="#24588F" />
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  ) : null}
+                </View>
+              </View>
+            ) : (
+              <>
+                <View style={styles.trackingModalReadyHeader}>
+                  <View style={styles.trackingModalReadyIcon}>
+                    <Ionicons name="qr-code-outline" size={27} color="#1B5CA2" />
+                  </View>
+                  <View style={styles.trackingModalReadyCopy}>
+                    <Text style={styles.trackingModalEyebrow}>{t("result.payment.information", "INFORMACIÓN DEL ENVÍO")}</Text>
+                    <Text style={styles.trackingModalReadyState}>{paymentStatus}</Text>
+                  </View>
+                </View>
+                <Text style={styles.trackingModalTitle}>{title}</Text>
+                <Text style={styles.trackingModalDescription}>{paymentDescription}</Text>
+              </>
+            )}
+
+            {ready && office ? (
+              <View style={[styles.trackingModalOfficeCard, stacked ? styles.trackingModalOfficeCardStacked : null]}>
+                <View style={styles.trackingModalOfficeDetails}>
+                  <Text style={styles.trackingModalEyebrow}>{t("result.modal.destinationOffice", "Oficina de destino")}</Text>
+                  <Text style={styles.trackingModalOfficeName}>{office.regional}</Text>
+                  <Text style={styles.trackingModalAddress}>{office.direccion}</Text>
+                </View>
+                {mapUrl ? (
+                  <TouchableOpacity
+                    style={[styles.trackingModalMapButton, stacked ? styles.trackingModalMapButtonStacked : null]}
+                    onPress={() => onOpenMap(mapUrl)}
+                    activeOpacity={0.82}
+                    accessibilityRole="link"
+                    accessibilityLabel={t("result.modal.viewMap", "Ver en mapa")}
+                  >
+                    <Text style={styles.trackingModalMapText}>{t("result.modal.viewMap", "Ver en mapa")}</Text>
+                    <Ionicons name="open-outline" size={14} color="#24588F" />
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+            ) : null}
+
+            {hasPaymentNotice ? (
+              <>
+                <View style={styles.trackingModalPaymentCard}>
+                  <Text style={styles.trackingModalPaymentLabel}>
+                    {ready
+                      ? t("result.payment.readyAmountLabel", "Pago pendiente al recoger")
+                      : t("result.payment.amountLabel", "Importe final de tu envío")}
+                  </Text>
+                  <Text style={styles.trackingModalPaymentAmount}><Text style={styles.trackingModalPaymentCurrency}>Bs</Text> {paymentAmount}</Text>
+                  <Text style={styles.trackingModalPaymentFootnote}>{t("result.payment.amountDescription", "Este es el total registrado para tu paquete.")}</Text>
+                </View>
+                <View style={styles.trackingModalPaymentTip}>
+                  <View style={styles.trackingModalPaymentTipIcon}><Text style={styles.trackingModalPaymentTipIconText}>i</Text></View>
+                  <Text style={styles.trackingModalPaymentTipText}>{paymentTip}</Text>
+                </View>
+              </>
+            ) : null}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 const createStyles = (t) =>
   StyleSheet.create({
     container: { flex: 1 },
@@ -1033,48 +1465,115 @@ const createStyles = (t) =>
     refreshWrap: { paddingHorizontal: 16, paddingBottom: 16 },
     refreshText: { marginBottom: 8, color: t.colors.text, fontWeight: "700", fontSize: 12 },
     progressCard: { paddingTop: 14, paddingBottom: 16, paddingHorizontal: 0, borderRadius: 14, borderTopWidth: 1, borderColor: "rgba(160, 186, 218, 0.65)", backgroundColor: "rgba(255,255,255,0.82)", marginBottom: 12 },
-    cardHead: { paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
-    cardTitle: { fontSize: 17, fontWeight: "900", color: "#122F54" },
-    cardMeta: { color: "#5D7596", fontWeight: "700", fontSize: 11 },
+    cardHead: { alignSelf: "stretch", paddingHorizontal: 16, flexDirection: "row", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 },
+    progressCardHead: { paddingBottom: 11, borderBottomWidth: 1, borderBottomColor: "rgba(182, 204, 230, 0.7)" },
+    progressHeadingCopy: { flexShrink: 1, minWidth: 0, gap: 3 },
+    progressTitleRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    progressTitleAccent: { width: 5, height: 22, borderRadius: 999, backgroundColor: "#F5C52D" },
+    progressHelpRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+    progressHelpIcon: { width: 15, height: 15, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#E6F1FF" },
+    progressHelpIconText: { color: "#1B67AB", fontSize: 10, lineHeight: 12, fontWeight: "900" },
+    cardTitle: { flexShrink: 1, minWidth: 0, maxWidth: "100%", fontSize: 17, fontWeight: "900", color: "#122F54" },
+    cardMeta: { flexShrink: 1, minWidth: 0, maxWidth: "100%", color: "#5D7596", fontWeight: "700", fontSize: 11, textAlign: "right" },
     cardMetaStrong: { color: "#1A549A", fontWeight: "900" },
+    progressStatus: { flexShrink: 0, alignItems: "flex-end", gap: 4 },
+    progressCompleted: { color: "#6C8097", fontSize: 9, lineHeight: 12, fontWeight: "700", textAlign: "right" },
+    progressStatusChip: { minHeight: 22, paddingHorizontal: 8, paddingVertical: 3, borderWidth: 1, borderColor: "#D3E3F2", borderRadius: 999, backgroundColor: "#F1F7FD", flexDirection: "row", alignItems: "center", gap: 3 },
+    progressStatusChipDelivered: { borderColor: "#C6E5CC", backgroundColor: "#ECF8EE" },
+    progressStatusChipReturning: { borderColor: "#E8C58D", backgroundColor: "#FFF8E8" },
+    progressStatusLabel: { color: "#5D7596", fontSize: 9, fontWeight: "700", textTransform: "uppercase" },
+    progressStatusValue: { color: "#1A549A", fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+    progressStatusValueDelivered: { color: "#287D32" },
+    progressStatusValueReturning: { color: "#9B5B00" },
+    progressHelp: { color: "#6C8097", fontSize: 10, lineHeight: 14, fontWeight: "600" },
+    progressViewport: { width: "100%", minWidth: 0, position: "relative" },
+    progressGridViewport: { width: "100%", minWidth: 0 },
+    progressScroll: { width: "100%" },
     progressTrack: { paddingHorizontal: 12, paddingTop: 16, gap: 0 },
+    progressGridTrack: { width: "100%", flexDirection: "row", flexWrap: "wrap", paddingHorizontal: 12, paddingTop: 16 },
+    progressNavButton: { position: "absolute", zIndex: 2, width: 30, height: 30, borderWidth: 1, borderColor: "#CFE0F2", borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.96)", ...t.shadow },
+    progressNavButtonCompact: { top: 25, left: 5 },
+    progressNavButtonNextCompact: { top: 25, right: 5 },
     progressStep: { width: 112, alignItems: "center" },
-    progressNodeRow: { width: "100%", flexDirection: "row", alignItems: "center", marginBottom: 8 },
-    progressLine: { flex: 1, height: 0, borderTopWidth: 2, borderTopColor: "#BCCCE2", borderStyle: "dashed" },
-    progressLineHidden: { flex: 0, width: 0, borderTopWidth: 0 },
+    progressStepCompact: { width: 96, flex: 0, alignItems: "center" },
+    progressNodeRow: { width: "100%", height: 68, position: "relative", alignItems: "center", justifyContent: "center", marginBottom: 8 },
+    progressNodeRowCompact: { height: 48, marginBottom: 6 },
+    progressLine: { position: "absolute", top: 33, width: "50%", height: 0, borderTopWidth: 2, borderTopColor: "#BCCCE2", borderStyle: "dashed" },
+    progressLineCompact: { top: 23 },
+    progressLineLeft: { left: 0 },
+    progressLineRight: { right: 0 },
+    progressLineHidden: { display: "none" },
     progressLineDone: { borderTopColor: "#3EA52F" },
-    progressDot: { width: 68, height: 68, borderRadius: 999, borderWidth: 2, borderColor: "#D3E0EE", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+    progressDot: { zIndex: 1, width: 68, height: 68, borderRadius: 999, borderWidth: 2, borderColor: "#D3E0EE", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+    progressDotCompact: { width: 48, height: 48 },
     progressDotDone: { borderColor: "#3EA52F", backgroundColor: "#3EA52F" },
     progressDotCurrent: { borderColor: "#3EA52F", backgroundColor: "#3EA52F" },
     progressDotCancelled: { borderColor: "#C0392B", backgroundColor: "#C0392B" },
-    progressDotCustoms: { borderColor: "#2474C6", backgroundColor: "#2474C6" },
     progressDotReturning: { borderColor: "#B26A00", backgroundColor: "#B26A00" },
     progressImage: { width: "100%", height: "100%" },
-    progressSplitArt: { position: "absolute", width: 68, height: 68, borderRadius: 999, overflow: "hidden" },
-    progressSplitArtPending: { opacity: 0.42 },
-    progressSplitHalfLeft: { position: "absolute", left: 0, top: 0, bottom: 0, width: "50%", overflow: "hidden" },
-    progressSplitHalfRight: { position: "absolute", right: 0, top: 0, bottom: 0, width: "50%", overflow: "hidden" },
-    progressSplitSource: { position: "absolute", left: 0, top: 0, width: 68, height: 68 },
-    progressSplitSourceRight: { left: -34 },
-    progressSplitSourceDimmed: { opacity: 0.42 },
     progressFallback: { color: "#FFFFFF", fontSize: 24, lineHeight: 28, fontWeight: "900" },
-    progressLabel: { color: "#4D6788", fontSize: 11, fontWeight: "700", textAlign: "center", lineHeight: 14, minHeight: 30, paddingHorizontal: 4 },
+    progressLabel: { width: "100%", maxWidth: "100%", flexShrink: 1, alignSelf: "stretch", color: "#4D6788", fontSize: 11, fontWeight: "700", textAlign: "center", lineHeight: 14, minHeight: 30, paddingHorizontal: 4 },
     progressLabelActive: { color: "#2B7E22", fontWeight: "900" },
-    combinedStageLabels: { minHeight: 30, flexDirection: "row", alignItems: "flex-start", justifyContent: "center", gap: 3, paddingHorizontal: 1 },
-    combinedStageLabel: { color: "#71839A", fontSize: 8, lineHeight: 13, fontWeight: "800", borderWidth: 1, borderColor: "#D7E2EE", borderRadius: 999, paddingHorizontal: 4, paddingVertical: 1, overflow: "hidden" },
-    combinedStageLabelCurrent: { color: "#1764AB", backgroundColor: "#E6F3FF", borderColor: "#B9D8F3", fontWeight: "900" },
-    combinedStageEquals: { color: "#71839A", fontSize: 9, lineHeight: 14, fontWeight: "900" },
-    progressState: { marginTop: 3, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999, borderWidth: 1, borderColor: "#D7E2EE", backgroundColor: "#F5F8FB", color: "#71839A", fontSize: 8, lineHeight: 10, fontWeight: "900", textAlign: "center", textTransform: "uppercase" },
+    progressState: { alignSelf: "center", maxWidth: "100%", flexShrink: 1, marginTop: 3, paddingHorizontal: 5, paddingVertical: 3, borderRadius: 999, borderWidth: 1, borderColor: "#D7E2EE", backgroundColor: "#F5F8FB", color: "#71839A", fontSize: 8, lineHeight: 10, fontWeight: "900", textAlign: "center", textTransform: "uppercase" },
     progressStateDone: { borderColor: "#C6E5CC", backgroundColor: "#ECF8EE", color: "#287D32" },
     progressStateCurrent: { borderColor: "#BDD7F0", backgroundColor: "#EAF4FF", color: "#1A609F" },
     progressStateCancelled: { borderColor: "#E6B7B7", backgroundColor: "#FFF0F0", color: "#A92B2B" },
-    progressStateCustoms: { borderColor: "#B9D8F3", backgroundColor: "#E6F3FF", color: "#1764AB" },
     progressStateReturning: { borderColor: "#E8C58D", backgroundColor: "#FFF8E8", color: "#9B5B00" },
     noticeCard: { padding: 14, borderRadius: 14, borderTopWidth: 1, borderColor: "#B8DFC2", backgroundColor: "#F3FFF6", marginBottom: 12 },
     returnNoticeCard: { borderColor: "#E8C58D", backgroundColor: "#FFF8E8" },
     noticeText: { color: "#1F5B33", fontWeight: "900", lineHeight: 20, fontSize: 13 },
-    noticeDetail: { marginTop: 10, gap: 8 },
+    noticeDetail: { marginTop: 10, gap: 7 },
+    noticeContactRow: { paddingHorizontal: 10, paddingVertical: 8, borderWidth: 1, borderColor: "#DDE8F3", borderRadius: 10, backgroundColor: "rgba(255,255,255,0.72)" },
+    noticeContactLabel: { color: "#6C8097", fontSize: 9, fontWeight: "900", letterSpacing: 0.7, textTransform: "uppercase" },
+    noticeContactValue: { marginTop: 3, color: "#203E60", fontSize: 12, lineHeight: 17, fontWeight: "800" },
+    noticeContactLink: { color: "#1E5FA8", textDecorationLine: "underline" },
     historyCard: { paddingTop: 14, paddingBottom: 12, paddingHorizontal: 0, borderRadius: 14, borderTopWidth: 1, borderColor: "rgba(160, 186, 218, 0.65)", backgroundColor: "rgba(255,255,255,0.82)" },
+    trackingModalOverlay: { flex: 1, alignItems: "center", justifyContent: "center", paddingHorizontal: 16, paddingVertical: 24, backgroundColor: "rgba(7, 25, 52, 0.58)" },
+    trackingModalOverlayStacked: { justifyContent: "flex-end", paddingHorizontal: 9, paddingTop: 16, paddingBottom: 8 },
+    trackingModalPanel: { width: "100%", maxWidth: 700, borderWidth: 1, borderColor: "#DCE6F2", borderRadius: 24, backgroundColor: "#FBFCFF", overflow: "hidden", ...t.shadowStrong },
+    trackingModalPanelReady: { backgroundColor: "#FBFFFC" },
+    trackingModalPanelProgress: { backgroundColor: "#FBFCFF" },
+    trackingModalPanelStacked: { borderBottomLeftRadius: 15, borderBottomRightRadius: 15 },
+    trackingModalAccent: { height: 4, flexDirection: "row" },
+    trackingModalAccentYellow: { width: "24%", backgroundColor: "#F5C52D" },
+    trackingModalAccentBlue: { flex: 1, backgroundColor: "#1B4F91" },
+    trackingModalClose: { position: "absolute", zIndex: 3, top: 13, right: 13, width: 40, height: 40, borderWidth: 1, borderColor: "#E1E9F2", borderRadius: 12, alignItems: "center", justifyContent: "center", backgroundColor: "#F8FAFC" },
+    trackingModalScroll: { flexShrink: 1 },
+    trackingModalScrollContent: { padding: 28, paddingTop: 30, paddingBottom: 24 },
+    trackingModalScrollContentStacked: { padding: 17, paddingTop: 21, paddingBottom: 16 },
+    trackingModalReadyHeader: { flexDirection: "row", alignItems: "center", gap: 12, marginRight: 42, marginBottom: 14 },
+    trackingModalReadyIcon: { width: 54, height: 54, borderRadius: 17, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "#D1E2F5", backgroundColor: "#EFF6FF" },
+    trackingModalReadyCopy: { flex: 1, minWidth: 0, gap: 5 },
+    trackingModalEyebrow: { color: "#647A94", fontSize: 9, fontWeight: "900", letterSpacing: 1.1, textTransform: "uppercase" },
+    trackingModalReadyState: { alignSelf: "flex-start", overflow: "hidden", paddingHorizontal: 9, paddingVertical: 4, borderWidth: 1, borderColor: "#C9DDF3", borderRadius: 999, backgroundColor: "#F0F6FD", color: "#24588F", fontSize: 10, fontWeight: "900" },
+    trackingModalTitle: { marginRight: 38, marginBottom: 10, color: "#173F70", fontSize: 23, lineHeight: 29, fontWeight: "900" },
+    trackingModalDescription: { marginBottom: 16, color: "#5A708B", fontSize: 13, lineHeight: 20, fontWeight: "500" },
+    trackingModalProgressLayout: { alignItems: "center", gap: 8 },
+    trackingModalProgressLayoutWide: { flexDirection: "row", alignItems: "center", gap: 14 },
+    trackingModalProgressLayoutLarge: { gap: 20 },
+    trackingModalIllustration: { width: 136, height: 116, borderRadius: 20, backgroundColor: "#F2F7FD" },
+    trackingModalIllustrationWide: { flex: 0, width: 150, height: 140 },
+    trackingModalIllustrationLarge: { width: 180, height: 158 },
+    trackingModalIllustrationCompact: { width: 128, height: 106 },
+    trackingModalInfo: { width: "100%", minWidth: 0 },
+    trackingModalInfoWide: { flex: 1, width: "auto" },
+    trackingModalOfficeCard: { marginTop: 4, padding: 13, borderWidth: 1, borderColor: "#DCE6F0", borderRadius: 15, backgroundColor: "#F8FAFC", flexDirection: "row", alignItems: "center", flexWrap: "wrap", gap: 9 },
+    trackingModalOfficeCardStacked: { flexDirection: "column", alignItems: "stretch" },
+    trackingModalOfficeDetails: { flex: 1, minWidth: 0 },
+    trackingModalOfficeName: { marginTop: 3, color: "#203E60", fontSize: 13, lineHeight: 18, fontWeight: "900" },
+    trackingModalAddress: { marginTop: 3, color: "#647991", fontSize: 11, lineHeight: 16, fontWeight: "600" },
+    trackingModalMapButton: { minHeight: 38, paddingHorizontal: 11, paddingVertical: 8, borderWidth: 1, borderColor: "#D8E2EE", borderRadius: 10, backgroundColor: "#FFFFFF", flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 4 },
+    trackingModalMapButtonStacked: { alignSelf: "flex-start" },
+    trackingModalMapText: { color: "#24588F", fontSize: 11, fontWeight: "900" },
+    trackingModalPaymentCard: { marginTop: 14, padding: 13, borderWidth: 1, borderColor: "#DCE6F0", borderRadius: 14, backgroundColor: "#F8FAFC" },
+    trackingModalPaymentLabel: { color: "#647991", fontSize: 11, fontWeight: "800" },
+    trackingModalPaymentAmount: { marginTop: 4, color: "#173F70", fontSize: 24, lineHeight: 30, fontWeight: "900" },
+    trackingModalPaymentCurrency: { color: "#647991", fontSize: 14, fontWeight: "800" },
+    trackingModalPaymentFootnote: { marginTop: 3, color: "#647991", fontSize: 11, lineHeight: 16, fontWeight: "600" },
+    trackingModalPaymentTip: { marginTop: 9, padding: 11, borderWidth: 1, borderColor: "#DCE6F0", borderRadius: 12, backgroundColor: "#F3F8FD", flexDirection: "row", alignItems: "flex-start", gap: 8 },
+    trackingModalPaymentTipIcon: { width: 19, height: 19, borderRadius: 10, backgroundColor: "#DDEBFA", alignItems: "center", justifyContent: "center" },
+    trackingModalPaymentTipIconText: { color: "#24588F", fontSize: 12, lineHeight: 15, fontWeight: "900" },
+    trackingModalPaymentTipText: { flex: 1, color: "#506A85", fontSize: 11, lineHeight: 16, fontWeight: "600" },
     officialModalOverlay: { flex: 1, paddingHorizontal: 18, paddingVertical: 24, backgroundColor: t.colors.overlay, justifyContent: "center", alignItems: "center" },
     officialModalScroll: { width: "100%", flexGrow: 0, flexShrink: 1, maxHeight: "92%" },
     officialModalScrollContent: { paddingVertical: 4 },
@@ -1105,14 +1604,14 @@ const createStyles = (t) =>
     historyTime: { color: "#163D6C", fontWeight: "900", fontSize: 13 },
     historyBody: { flex: 1, padding: 12 },
     historyEventTitle: { color: "#142F52", fontWeight: "900", fontSize: 14, lineHeight: 19 },
+    historyDeliveryMode: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 5 },
+    historyDeliveryModeText: { flex: 1, color: "#5B7695", fontSize: 11, lineHeight: 16, fontWeight: "700" },
     historyMeta: { marginTop: 10, gap: 6 },
     infoRow: { flexDirection: "row", alignItems: "center", gap: 8, borderWidth: 1, borderColor: "#E1EAF5", borderRadius: 8, backgroundColor: "#F7FBFF", paddingHorizontal: 8, paddingVertical: 6 },
     infoBadge: { flexDirection: "row", alignItems: "center", gap: 4, paddingRight: 4 },
     infoLabel: { color: "#5F7898", fontWeight: "900", fontSize: 10, textTransform: "uppercase" },
     infoValue: { flex: 1, color: "#213F61", fontWeight: "700", lineHeight: 17, fontSize: 12 },
     infoFlag: { width: 18, height: 12, borderRadius: 2, borderWidth: 1, borderColor: "#CDDCF0" },
-    latestBadge: { alignSelf: "flex-start", marginTop: 6, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 999, backgroundColor: "#EAF8EE", borderWidth: 1, borderColor: "#C6E5CC" },
-    latestBadgeText: { color: "#277D31", fontSize: 11, fontWeight: "900" },
     loaderOverlay: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255, 255, 255, 0.78)", zIndex: 99 },
     loaderText: { marginTop: 10, color: t.colors.muted, fontWeight: "800" },
   });

@@ -133,7 +133,7 @@ progress = resolve([
 ]);
 assert.deepEqual(progress.rawSteps, ["Admision", "Despacho", "Expedicion", "Ventanilla = Aduana", "Entregado"]);
 assert.equal(progress.currentStep, 3);
-assert.equal(progress.globalStatus, "En Aduana");
+assert.equal(progress.globalStatus, "En Ventanilla");
 assert.equal(progress.isPickupAvailable, false);
 
 progress = resolve([

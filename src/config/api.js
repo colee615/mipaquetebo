@@ -4,7 +4,7 @@ import Constants from "expo-constants";
 const extra = Constants?.expoConfig?.extra || Constants?.manifest2?.extra || {};
 const envToken = (process?.env?.EXPO_PUBLIC_API_BEARER_TOKEN || "").trim();
 
-const API_BASE_URL = (extra.apiBaseUrl || "").trim();
+const API_BASE_URL = "https://trackingbo.correos.gob.bo";
 const API_BEARER_TOKEN = envToken || (extra.apiBearerToken || "").trim();
 
 const apiClient = axios.create({

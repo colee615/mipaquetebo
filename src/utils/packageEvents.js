@@ -228,8 +228,8 @@ const translateStep = (step, t) => {
     Admision: ["result.step.admission", "Admision"],
     Despacho: ["result.step.dispatch", "Despacho"],
     Expedicion: ["result.step.forwarding", "Expedicion"],
-    Aduana: ["result.step.customs", "Aduana"],
-    "Ventanilla = Aduana": ["result.step.customsCounterCombined", "Ventanilla = Aduana"],
+    Aduana: ["result.step.counter", "Ventanilla"],
+    "Ventanilla = Aduana": ["result.step.counter", "Ventanilla"],
     Ventanilla: ["result.step.counter", "Ventanilla"],
     Cartero: ["result.step.carrier", "Cartero"],
     Entregado: ["result.step.delivered", "Entregado"],
@@ -351,25 +351,43 @@ export const getTrackingPresentation = (payload, t = (key, fallback) => fallback
       : statusCategory === "pickup"
         ? "Listo para recoger"
         : statusCategory === "customs"
-          ? "En Aduana"
+          ? "En Ventanilla"
           : statusCategory === "held"
-            ? "Retenido por aduana"
+            ? "En Ventanilla"
             : statusCategory === "exchangeHeld"
               ? "Retenido en oficina de cambio"
             : hasIncident ? "En transito con incidencia" : "En transito";
   }
 
-  const steps = rawSteps.map((step) => translateStep(step, t));
+  const displayRawSteps = [];
+  const visibleIndexByRawIndex = [];
+  rawSteps.forEach((step, index) => {
+    const displayStep = ["Aduana", "Ventanilla = Aduana"].includes(step) ? "Ventanilla" : step;
+    const previousDisplayStep = displayRawSteps[displayRawSteps.length - 1];
+    if (displayStep === "Ventanilla" && previousDisplayStep === "Ventanilla") {
+      visibleIndexByRawIndex[index] = displayRawSteps.length - 1;
+      return;
+    }
+    visibleIndexByRawIndex[index] = displayRawSteps.push(displayStep) - 1;
+  });
+  const rawCurrentStep = currentStep;
+  currentStep = visibleIndexByRawIndex[currentStep] ?? 0;
+  const steps = displayRawSteps.map((step) => translateStep(step, t));
+  const publicStatus = inCustoms && !cancelled
+    ? t("result.status.customs", "En Ventanilla")
+    : t(statusKey, statusFallback);
   const delivered = !cancelled && !returning && deliveredStage;
 
   return {
     steps,
     rawSteps,
+    displayRawSteps,
+    rawCurrentStep,
     currentStep,
     currentStepLabel: steps[currentStep] || steps[0],
     delivered,
     progressComplete: delivered,
-    globalStatus: t(statusKey, statusFallback),
+    globalStatus: publicStatus,
     hasIncident: hasIncident || heldByCustoms || heldAtExchange,
     isCancelled: cancelled,
     isCustoms: inCustoms,

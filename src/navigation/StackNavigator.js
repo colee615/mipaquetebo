@@ -6,15 +6,35 @@ import { useI18n } from "../i18n/ui";
 
 import LoadingScreen from "../screens/LoadingScreen";
 import ScanScreen from "../screens/ScanScreen";
-import ResultScreen from "../screens/ResultScreen";
+import ResultScreen from "../screens/ResultScreen.js";
 import SavedPackagesScreen from "../screens/SavedPackagesScreen";
 import PackagesLocalExternalScreen from "../screens/PackagesLocalExternalScreen";
 
 const Stack = createNativeStackNavigator();
 
+const TRACKING_PREVIEW_DATA = {
+  filtro: { codigo: "ZZ000000000ZZ" },
+  existe_paquete: true,
+  resultado: [{
+    eventos: [{
+      codigo: "ZZ000000000ZZ",
+      evento_id: 123456,
+      codigo_evento: 34,
+      event_tag: "EME",
+      nombre_evento: "Registrar información de la revisión de ingreso del envío",
+      created_at: "2026-11-05 14:53:00",
+      office: "LA PAZ LC/AO",
+      servicio: "EMS",
+      ciudad_destino: "La Paz",
+    }],
+  }],
+};
+
 export default function StackNavigator() {
   const { colors, mode, setMode, isDark } = useTheme();
   const { t, language, setLanguage } = useI18n();
+  const trackingPreviewEnabled = typeof window !== "undefined"
+    && window.location.search.includes("tracking-preview");
   const headerTextColor = isDark ? colors.text : colors.secondary;
   const renderHeaderLogo = () => (
     <View
@@ -35,7 +55,7 @@ export default function StackNavigator() {
 
   return (
     <Stack.Navigator
-      initialRouteName="Loading"
+      initialRouteName={trackingPreviewEnabled ? "Result" : "Loading"}
       screenOptions={({ navigation }) => ({
         headerTitleAlign: "center",
         headerStyle: {
@@ -105,7 +125,12 @@ export default function StackNavigator() {
           headerTitle: renderHeaderLogo,
         }}
       />
-      <Stack.Screen name="Result" component={ResultScreen} options={{ title: t("nav.result", "Resultado") }} />
+      <Stack.Screen
+        name="Result"
+        component={ResultScreen}
+        initialParams={trackingPreviewEnabled ? { data: TRACKING_PREVIEW_DATA, preview: true } : undefined}
+        options={{ title: t("nav.result", "Resultado") }}
+      />
       <Stack.Screen
         name="SavedPackages"
         component={SavedPackagesScreen}
